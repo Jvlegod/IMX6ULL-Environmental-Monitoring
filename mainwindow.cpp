@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include "trendchart.h"
+#include "wifidialog.h"
 #include <QApplication>
 #include <QHeaderView>
 #include <QLabel>
@@ -23,7 +24,7 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
       lastUpdateLabel_(nullptr), alertLabel_(nullptr), temperatureValue_(nullptr),
       temperatureUnit_(nullptr), humidityValue_(nullptr), humidityUnit_(nullptr),
       pressureValue_(nullptr), pressureUnit_(nullptr), illuminanceValue_(nullptr),
-      illuminanceUnit_(nullptr), statusTable_(nullptr), chartView_(nullptr)
+      illuminanceUnit_(nullptr), statusTable_(nullptr), chartView_(nullptr), wifiDialog_(nullptr)
 {
     setWindowTitle(QStringLiteral("IMX6ULL 环境监测系统"));
     resize(1100, 720);
@@ -52,6 +53,10 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     samplingButton_->setMinimumWidth(120);
     connect(samplingButton_, &QPushButton::clicked, this, &MainWindow::toggleSampling);
     header->addWidget(samplingButton_);
+    auto *wifiButton = new QPushButton(QStringLiteral("WiFi 配置"));
+    wifiButton->setObjectName(QStringLiteral("samplingButton"));
+    connect(wifiButton, &QPushButton::clicked, this, &MainWindow::showWifiDialog);
+    header->addWidget(wifiButton);
     root->addLayout(header);
 
     auto *metrics = new QGridLayout;
@@ -109,6 +114,19 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     connect(provider_, &ISensorProvider::deviceStatusChanged, this, &MainWindow::updateDeviceStatus);
     connect(provider_, &ISensorProvider::providerError, this,
             [this](const QString &message) { setAlert(message, true); });
+}
+
+void MainWindow::showWifiDialog()
+{
+    if (!wifiDialog_) {
+        wifiDialog_ = new WifiDialog(this);
+        connect(wifiDialog_, &WifiDialog::wifiStateChanged, this, [this](bool connected, const QString &detail) {
+            updateDeviceStatus(QStringLiteral("串口 WiFi"), connected, detail);
+        });
+    }
+    wifiDialog_->show();
+    wifiDialog_->raise();
+    wifiDialog_->activateWindow();
 }
 
 QWidget *MainWindow::makeMetricCard(const QString &title, const QString &accent,

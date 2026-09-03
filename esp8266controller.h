@@ -4,7 +4,14 @@
 #include <QVector>
 class QSocketNotifier;
 class QTimer;
-struct WifiNetwork { QString ssid; int rssi = -100; int encryption = 0; };
+struct WifiNetwork
+{
+    WifiNetwork(const QString &ssidValue = QString(), int rssiValue = -100, int encryptionValue = 0)
+        : ssid(ssidValue), rssi(rssiValue), encryption(encryptionValue) {}
+    QString ssid;
+    int rssi;
+    int encryption;
+};
 class Esp8266Controller final : public QObject
 {
     Q_OBJECT

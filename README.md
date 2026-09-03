@@ -41,7 +41,18 @@ export QT_QPA_PLATFORM=linuxfb
 - BMP280: read the existing Linux IIO files such as `in_pressure_input` and `in_temp_input`.
 - RS485: add the confirmed Modbus RTU or custom-frame parser.
 - VEML7700: add an I2C reader after its bus address and kernel access path are confirmed.
-- Serial WiFi: add the confirmed serial or TCP transport and report link state.
+- Serial WiFi: use the built-in ESP8266 configuration dialog to open the UART, scan nearby APs and join a network.
+
+## ESP8266 WiFi setup
+
+Connect the ATK-MW8266D UART TX to the IMX6ULL UART RX, UART RX to UART TX, and share GND. The module accepts a 3.3 V to 5 V supply, while its UART uses 3.3 V LVTTL levels.
+
+1. Start the application and select `WiFi 配置`.
+2. The dialog automatically selects the first available board UART, opens it with the module default `115200 8N1` and starts scanning.
+3. Double-click the target SSID, enter its password and connect. Use `重新扫描 WiFi` when another scan is needed.
+4. If the module does not answer `AT`, verify the crossed TX/RX wiring, common ground, power capacity, UART device permissions and firmware baud rate.
+
+The controller follows the supplied `ESP8266_AT指令集V2.1.0.pdf`: `AT`, `AT+CWMODE_CUR=1`, `AT+CWLAP`, `AT+CWJAP_CUR` and `AT+CIFSR`. The `_CUR` commands avoid writing temporary settings to flash.
 
 References:
 
@@ -49,3 +60,6 @@ References:
 - https://doc.qt.io/qt-5/qtcharts-index.html
 - https://doc.qt.io/qt-5/cmake-get-started.html
 - https://www.bosch-sensortec.com/products/environmental-sensors/pressure-sensors/bmp280/
+- https://docs.espressif.com/projects/esp-at/en/latest/esp8266/AT_Command_Set/Wi-Fi_AT_Commands.html
+- `../../【正点原子】WIFI模块ATK-ESP8266资料（新资料）/4，参考资料/ESP8266_AT指令集V2.1.0.pdf`
+- `../../【正点原子】WIFI模块ATK-ESP8266资料（新资料）/ATK-MW8266D模块用户手册_V1.3.pdf`

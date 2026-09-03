@@ -22,8 +22,8 @@ void SimulatedSensorProvider::start()
                              QStringLiteral("模拟数据"));
     emit deviceStatusChanged(QStringLiteral("VEML7700 / I2C"), true,
                              QStringLiteral("模拟数据"));
-    emit deviceStatusChanged(QStringLiteral("串口 WiFi"), true,
-                             QStringLiteral("模拟链路"));
+    emit deviceStatusChanged(QStringLiteral("串口 WiFi"), false,
+                             QStringLiteral("等待 ESP8266 配置"));
     sample();
     timer_->start();
 }

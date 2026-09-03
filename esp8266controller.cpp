@@ -1,5 +1,6 @@
 #include "esp8266controller.h"
 #include <QDir>
+#include <QRegularExpression>
 #include <QSocketNotifier>
 #include <QTimer>
 #include <algorithm>
@@ -52,15 +53,16 @@ bool Esp8266Controller::openPort(const QString &path, int baudRate)
     notifier_ = new QSocketNotifier(fd_, QSocketNotifier::Read, this);
     connect(notifier_, &QSocketNotifier::activated, this, &Esp8266Controller::readAvailable);
     emit portStateChanged(true, QStringLiteral("%1 · %2 8N1").arg(path).arg(baudRate));
-    sendCommand(QByteArrayLiteral("AT\r\n"), 2000);
     return true;
 }
 
 void Esp8266Controller::closePort()
 {
+    const bool wasOpen = isOpen();
     timeoutTimer_->stop(); delete notifier_; notifier_ = nullptr;
     if (fd_ >= 0) ::close(fd_);
     fd_ = -1; simulated_ = false; operation_ = Idle; receiveBuffer_.clear();
+    if (wasOpen) emit portStateChanged(false, QStringLiteral("ESP8266 串口已关闭"));
 }
 bool Esp8266Controller::isOpen() const { return simulated_ || fd_ >= 0; }
 
@@ -69,7 +71,7 @@ void Esp8266Controller::scanNetworks()
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
     networks_.clear();
     if (simulated_) { QTimer::singleShot(500, this, [this] { networks_ = {{QStringLiteral("Office-WiFi"), -38, 3}, {QStringLiteral("Lab-2.4G"), -56, 3}, {QStringLiteral("Guest"), -72, 0}}; emit scanFinished(networks_); }); return; }
-    operation_ = WaitingForScanMode; sendCommand(QByteArrayLiteral("AT+CWMODE=1\r\n"), 3000);
+    operation_ = WaitingForScanMode; sendCommand(QByteArrayLiteral("AT+CWMODE_CUR=1\r\n"), 3000);
 }
 
 void Esp8266Controller::connectNetwork(const QString &ssid, const QString &password)
@@ -77,7 +79,7 @@ void Esp8266Controller::connectNetwork(const QString &ssid, const QString &passw
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
     if (simulated_) { QTimer::singleShot(900, this, [this, ssid] { emit connectionStateChanged(true, QStringLiteral("已连接 %1 · 192.168.1.108").arg(ssid)); }); return; }
     operation_ = Connecting;
-    const QString command = QStringLiteral("AT+CWJAP=\"%1\",\"%2\"\r\n").arg(escapeArgument(ssid), escapeArgument(password));
+    const QString command = QStringLiteral("AT+CWJAP_CUR=\"%1\",\"%2\"\r\n").arg(escapeArgument(ssid), escapeArgument(password));
     sendCommand(command.toUtf8(), 25000);
 }
 
@@ -99,17 +101,26 @@ void Esp8266Controller::processLine(const QByteArray &line)
 {
     const QString text = QString::fromUtf8(line);
     if (text.startsWith(QStringLiteral("+CWLAP:"))) {
-        const int q1 = text.indexOf('"'); const int q2 = text.indexOf('"', q1 + 1);
-        const QStringList fields = text.mid(q2 + 2).split(',');
-        if (q1 >= 0 && q2 > q1 && !fields.isEmpty()) { WifiNetwork n{text.mid(q1 + 1, q2 - q1 - 1), fields.first().toInt(), text.mid(8, q1 - 9).toInt()}; auto it = std::find_if(networks_.begin(), networks_.end(), [&n](const WifiNetwork &v) { return v.ssid == n.ssid; }); if (it == networks_.end()) networks_.append(n); else if (n.rssi > it->rssi) *it = n; }
+        const QRegularExpression expression(QStringLiteral("^\\+CWLAP:\\((\\d+),\"((?:\\\\.|[^\"])*)\",(-?\\d+)"));
+        const QRegularExpressionMatch match = expression.match(text);
+        if (match.hasMatch()) {
+            WifiNetwork network{match.captured(2), match.captured(3).toInt(), match.captured(1).toInt()};
+            auto it = std::find_if(networks_.begin(), networks_.end(), [&network](const WifiNetwork &value) { return value.ssid == network.ssid; });
+            if (it == networks_.end()) networks_.append(network);
+            else if (network.rssi > it->rssi) *it = network;
+        }
         return;
     }
     if (text == QStringLiteral("ERROR") || text == QStringLiteral("FAIL") || text.startsWith(QStringLiteral("+CWJAP:"))) { finishWithError(QStringLiteral("ESP8266 返回: %1").arg(text)); return; }
     if (operation_ == WaitingForScanMode && text == QStringLiteral("OK")) { operation_ = Scanning; sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000); }
     else if (operation_ == Scanning && text == QStringLiteral("OK")) { timeoutTimer_->stop(); std::sort(networks_.begin(), networks_.end(), [](const WifiNetwork &a, const WifiNetwork &b) { return a.rssi > b.rssi; }); operation_ = Idle; emit scanFinished(networks_); }
-    else if (operation_ == Connecting && (text == QStringLiteral("WIFI GOT IP") || text == QStringLiteral("OK"))) { operation_ = QueryingIp; sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000); }
-    else if (operation_ == QueryingIp && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) emit connectionStateChanged(true, text);
+    else if (operation_ == Connecting && text == QStringLiteral("OK")) { operation_ = QueryingIp; sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000); }
+    else if (operation_ == QueryingIp && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) {
+        timeoutTimer_->stop(); operation_ = Idle; emit connectionStateChanged(true, text);
+    }
     else if (operation_ == QueryingIp && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
+    else if (operation_ == Idle && text == QStringLiteral("OK")) timeoutTimer_->stop();
+    else if (text == QStringLiteral("WIFI DISCONNECT")) emit connectionStateChanged(false, QStringLiteral("WiFi 已断开"));
 }
 
 void Esp8266Controller::timeout() { finishWithError(QStringLiteral("ESP8266 响应超时, 请检查接线和波特率")); }

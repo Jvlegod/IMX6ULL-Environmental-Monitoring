@@ -11,6 +11,7 @@ class QPushButton;
 class QTableWidget;
 QT_END_NAMESPACE
 class TrendChart;
+class WifiDialog;
 
 class MainWindow final : public QMainWindow
 {
@@ -21,6 +22,7 @@ private slots:
     void updateSnapshot(const SensorSnapshot &snapshot);
     void updateDeviceStatus(const QString &device, bool connected, const QString &detail);
     void toggleSampling();
+    void showWifiDialog();
 private:
     QWidget *makeMetricCard(const QString &title, const QString &accent,
                             QLabel **valueLabel, QLabel **unitLabel);
@@ -40,6 +42,7 @@ private:
     QLabel *illuminanceUnit_;
     QTableWidget *statusTable_;
     TrendChart *chartView_;
+    WifiDialog *wifiDialog_;
     QVector<double> temperatureSeries_;
     QVector<double> humiditySeries_;
     QVector<double> pressureSeries_;
