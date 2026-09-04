@@ -88,9 +88,6 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     samplingButton_->setMinimumWidth(120);
     connect(samplingButton_, &QPushButton::clicked, this, &MainWindow::toggleSampling);
     header->addWidget(samplingButton_);
-    acquisitionButton_ = new QPushButton(QStringLiteral("采集时间"));
-    connect(acquisitionButton_, &QPushButton::clicked, this, &MainWindow::showAcquisitionDialog);
-    header->addWidget(acquisitionButton_);
     auto *wifiButton = new QPushButton(QStringLiteral("WiFi 配置"));
     wifiButton->setObjectName(QStringLiteral("samplingButton"));
     connect(wifiButton, &QPushButton::clicked, this, &MainWindow::showWifiDialog);
@@ -108,6 +105,9 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     samplingControls->addWidget(samplingIntervalCombo_);
     thresholdButton_ = new QPushButton(QStringLiteral("阈值设置"));
     samplingControls->addWidget(thresholdButton_);
+    acquisitionButton_ = new QPushButton(QStringLiteral("采集时间"));
+    connect(acquisitionButton_, &QPushButton::clicked, this, &MainWindow::showAcquisitionDialog);
+    samplingControls->addWidget(acquisitionButton_);
     samplingControls->addStretch();
     root->addLayout(samplingControls);
     loadSettings();
