@@ -13,6 +13,13 @@ struct SensorSnapshot
     double illuminance = 0.0;
 };
 
+enum SensorDevice {
+    SensorBmp280 = 1,
+    SensorRs485 = 2,
+    SensorVeml7700 = 4,
+    SensorAll = SensorBmp280 | SensorRs485 | SensorVeml7700
+};
+
 Q_DECLARE_METATYPE(SensorSnapshot)
 
 class ISensorProvider : public QObject
@@ -27,6 +34,7 @@ public slots:
     virtual void start() = 0;
     virtual void stop() = 0;
     virtual void setSamplingInterval(int intervalMs) = 0;
+    virtual void setEnabledDevices(int deviceMask) = 0;
 
 signals:
     void snapshotReady(const SensorSnapshot &snapshot);
@@ -45,6 +53,7 @@ public slots:
     void start() override;
     void stop() override;
     void setSamplingInterval(int intervalMs) override;
+    void setEnabledDevices(int deviceMask) override;
 
 private slots:
     void sample();
@@ -52,6 +61,7 @@ private slots:
 private:
     class QTimer *timer_;
     int sampleIndex_;
+    int enabledDevices_;
 };
 
 #endif

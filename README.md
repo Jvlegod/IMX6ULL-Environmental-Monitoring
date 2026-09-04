@@ -55,6 +55,20 @@ The settings are stored for the current target user under:
 ~/.config/jvle/environment_monitor.conf
 ```
 
+## Independent acquisition tasks
+
+The `采集任务` control supports selecting BMP280, RS485 temperature/humidity and VEML7700 independently. A task can run for a specified duration or between an absolute start and end time. Samples from selected devices are appended to a CSV file; unselected device fields are not written as measurements.
+
+The current simulated provider implements this selection through `ISensorProvider::setEnabledDevices`. A hardware provider should use the same mask to read only the requested sub-devices and emit a `SensorSnapshot`. The current task output is CSV rather than SQLite.
+
+The CSV contains an ISO timestamp and columns for the selected devices, for example:
+
+```text
+timestamp,bmp280_temperature,bmp280_pressure,rs485_humidity
+```
+
+When a task starts, the provider uses the selected device mask. When it finishes or is stopped, the provider returns to all devices. Abnormal-data reporting remains on-screen only; audio reporting is reserved for a later version.
+
 ## ESP8266 WiFi setup
 
 Connect the ATK-MW8266D UART TX to the IMX6ULL UART RX, UART RX to UART TX, and share GND. The module accepts a 3.3 V to 5 V supply, while its UART uses 3.3 V LVTTL levels.

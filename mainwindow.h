@@ -2,6 +2,8 @@
 #define MAINWINDOW_H
 
 #include "sensorprovider.h"
+#include <QDateTime>
+#include <QFile>
 #include <QMainWindow>
 #include <QVector>
 
@@ -10,6 +12,7 @@ class QLabel;
 class QComboBox;
 class QPushButton;
 class QTableWidget;
+class QTimer;
 QT_END_NAMESPACE
 class TrendChart;
 class WifiDialog;
@@ -25,7 +28,9 @@ private slots:
     void toggleSampling();
     void showWifiDialog();
     void showThresholdDialog();
+    void showAcquisitionDialog();
     void updateSamplingInterval(int index);
+    void handleAcquisitionTimer();
 private:
     QWidget *makeMetricCard(const QString &title, const QString &accent,
                             QLabel **valueLabel, QLabel **unitLabel);
@@ -33,8 +38,14 @@ private:
     void appendSeries(QVector<double> *series, double value);
     void loadSettings();
     void saveThresholds();
+    void startAcquisition(const QDateTime &startTime, const QDateTime &endTime,
+                          int deviceMask, const QString &filePath);
+    void stopAcquisition(const QString &message);
+    void scheduleAcquisitionTimer(const QDateTime &target);
+    void recordSnapshot(const SensorSnapshot &snapshot);
     ISensorProvider *provider_;
     QPushButton *samplingButton_;
+    QPushButton *acquisitionButton_;
     QPushButton *thresholdButton_;
     QComboBox *samplingIntervalCombo_;
     QLabel *lastUpdateLabel_;
@@ -62,6 +73,14 @@ private:
     double pressureMaximum_;
     double illuminanceMinimum_;
     double illuminanceMaximum_;
+    QTimer *acquisitionTimer_;
+    QFile acquisitionFile_;
+    QDateTime acquisitionStartTime_;
+    QDateTime acquisitionEndTime_;
+    QString acquisitionFilePath_;
+    int acquisitionDeviceMask_;
+    bool acquisitionActive_;
+    bool acquisitionScheduled_;
 };
 
 #endif

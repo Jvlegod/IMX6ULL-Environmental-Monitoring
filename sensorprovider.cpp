@@ -4,7 +4,7 @@
 #include <QtMath>
 
 SimulatedSensorProvider::SimulatedSensorProvider(QObject *parent)
-    : ISensorProvider(parent), timer_(new QTimer(this)), sampleIndex_(0)
+    : ISensorProvider(parent), timer_(new QTimer(this)), sampleIndex_(0), enabledDevices_(SensorAll)
 {
     timer_->setInterval(1000);
     connect(timer_, &QTimer::timeout, this, &SimulatedSensorProvider::sample);
@@ -40,14 +40,23 @@ void SimulatedSensorProvider::setSamplingInterval(int intervalMs)
     timer_->setInterval(qMax(1000, intervalMs));
 }
 
+void SimulatedSensorProvider::setEnabledDevices(int deviceMask)
+{
+    enabledDevices_ = deviceMask & SensorAll;
+}
+
 void SimulatedSensorProvider::sample()
 {
     const double t = sampleIndex_++ / 10.0;
     SensorSnapshot snapshot;
     snapshot.timestamp = QDateTime::currentDateTime();
-    snapshot.temperature = 23.5 + 1.8 * qSin(t) + 0.15 * qSin(t * 3.0);
-    snapshot.humidity = 54.0 + 8.0 * qSin(t * 0.72 + 0.8);
-    snapshot.pressure = 101.25 + 0.32 * qSin(t * 0.35);
-    snapshot.illuminance = qMax(0.0, 480.0 + 260.0 * qSin(t * 0.28 - 0.6));
+    snapshot.temperature = enabledDevices_ & SensorBmp280
+        ? 23.5 + 1.8 * qSin(t) + 0.15 * qSin(t * 3.0) : qQNaN();
+    snapshot.pressure = enabledDevices_ & SensorBmp280
+        ? 101.25 + 0.32 * qSin(t * 0.35) : qQNaN();
+    snapshot.humidity = enabledDevices_ & SensorRs485
+        ? 54.0 + 8.0 * qSin(t * 0.72 + 0.8) : qQNaN();
+    snapshot.illuminance = enabledDevices_ & SensorVeml7700
+        ? qMax(0.0, 480.0 + 260.0 * qSin(t * 0.28 - 0.6)) : qQNaN();
     emit snapshotReady(snapshot);
 }
