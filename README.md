@@ -63,3 +63,20 @@ References:
 - https://docs.espressif.com/projects/esp-at/en/latest/esp8266/AT_Command_Set/Wi-Fi_AT_Commands.html
 - `../../【正点原子】WIFI模块ATK-ESP8266资料（新资料）/4，参考资料/ESP8266_AT指令集V2.1.0.pdf`
 - `../../【正点原子】WIFI模块ATK-ESP8266资料（新资料）/ATK-MW8266D模块用户手册_V1.3.pdf`
+
+## WiFi OTA application update
+
+The WiFi dialog can download and install a Qt application update from a computer on the same LAN. The ESP8266 must already be connected to the target WiFi network. The first version uses HTTP plus manifest SHA256 verification and keeps a `.backup` copy during replacement.
+
+Build an ARM application and prepare a server directory:
+
+```sh
+mkdir -p ota
+cp build-arm/environment_monitor ota/environment_monitor
+sha256sum ota/environment_monitor
+stat -c '%s' ota/environment_monitor
+python3 scripts/make_ota_manifest.py --file ota/environment_monitor --version 0.2.0 --path /environment_monitor --output ota/manifest.json
+cd ota && python3 -m http.server 8080
+```
+
+In `WiFi 配置`, set the computer IP, keep port `8080` and manifest path `/manifest.json`, then click `检查并升级应用`. The rootfs install must include `environment_monitor_ota_apply.sh`; the CMake install rule installs it to `/usr/bin`.

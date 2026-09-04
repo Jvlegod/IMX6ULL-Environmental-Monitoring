@@ -1,5 +1,10 @@
 #include "esp8266controller.h"
+
+#include <QCryptographicHash>
 #include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 #include <QSocketNotifier>
 #include <QTimer>
@@ -19,11 +24,13 @@ speed_t serialSpeed(int baud)
 
 Esp8266Controller::Esp8266Controller(QObject *parent)
     : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)),
-      operation_(Idle), simulated_(false)
+      operation_(Idle), simulated_(false), otaPromptHandled_(false), otaHeadersParsed_(false),
+      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false)
 {
     timeoutTimer_->setSingleShot(true);
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
 }
+
 Esp8266Controller::~Esp8266Controller() { closePort(); }
 
 QStringList Esp8266Controller::availablePorts()
@@ -60,10 +67,12 @@ void Esp8266Controller::closePort()
 {
     const bool wasOpen = isOpen();
     timeoutTimer_->stop(); delete notifier_; notifier_ = nullptr;
+    if (otaFile_) { otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
     if (fd_ >= 0) ::close(fd_);
     fd_ = -1; simulated_ = false; operation_ = Idle; receiveBuffer_.clear();
     if (wasOpen) emit portStateChanged(false, QStringLiteral("ESP8266 串口已关闭"));
 }
+
 bool Esp8266Controller::isOpen() const { return simulated_ || fd_ >= 0; }
 
 void Esp8266Controller::scanNetworks()
@@ -83,18 +92,146 @@ void Esp8266Controller::connectNetwork(const QString &ssid, const QString &passw
     sendCommand(command.toUtf8(), 25000);
 }
 
+void Esp8266Controller::startOta(const QString &host, quint16 port, const QString &manifestPath)
+{
+    if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开 ESP8266 串口")); return; }
+    if (host.trimmed().isEmpty() || manifestPath.trimmed().isEmpty()) { emit operationFailed(QStringLiteral("OTA 服务器地址和 manifest 路径不能为空")); return; }
+    if (operation_ != Idle) { emit operationFailed(QStringLiteral("ESP8266 当前正在执行其他操作")); return; }
+    otaHost_ = host.trimmed(); otaPort_ = port ? port : 80; otaManifestPath_ = manifestPath.trimmed();
+    otaVersion_.clear(); otaFilePath_.clear(); otaFileSha256_.clear(); otaHttpBody_.clear(); otaHttpHeaders_.clear();
+    otaExpectedBytes_ = 0; otaExpectedFileBytes_ = 0; otaReceivedBytes_ = 0; otaDownloadingFile_ = false;
+    if (simulated_) {
+        QTimer::singleShot(300, this, [this] { emit otaProgress(1, 1); emit otaPackageReady(QStringLiteral("0.2.0"), QStringLiteral("/tmp/environment_monitor.new")); });
+        return;
+    }
+    beginOtaConnection();
+}
+
+void Esp8266Controller::beginOtaConnection()
+{
+    otaPromptHandled_ = false; otaHeadersParsed_ = false; otaHttpBody_.clear(); otaHttpHeaders_.clear();
+    operation_ = OtaConnecting;
+    const QByteArray command = QStringLiteral("AT+CIPSTART=\"TCP\",\"%1\",%2\r\n").arg(escapeArgument(otaHost_)).arg(otaPort_).toUtf8();
+    sendCommand(command, 10000);
+}
+
+bool Esp8266Controller::writeSerial(const QByteArray &data)
+{
+    if (fd_ < 0) return false;
+    return ::write(fd_, data.constData(), static_cast<size_t>(data.size())) == data.size();
+}
+
 void Esp8266Controller::sendCommand(const QByteArray &command, int timeoutMs)
 {
-    if (fd_ >= 0) ::write(fd_, command.constData(), static_cast<size_t>(command.size()));
+    if (fd_ >= 0 && !writeSerial(command)) { finishWithError(QStringLiteral("ESP8266 串口写入失败")); return; }
     timeoutTimer_->start(timeoutMs);
+}
+
+void Esp8266Controller::sendOtaRequest()
+{
+    const QString path = otaDownloadingFile_ ? otaFilePath_ : otaManifestPath_;
+    otaRequest_ = QStringLiteral("GET %1 HTTP/1.1\r\nHost: %2\r\nConnection: close\r\n\r\n").arg(path, otaHost_).toUtf8();
+    operation_ = OtaWaitingPrompt;
+    sendCommand(QStringLiteral("AT+CIPSEND=%1\r\n").arg(otaRequest_.size()).toUtf8(), 5000);
 }
 
 void Esp8266Controller::readAvailable()
 {
-    char data[512]; ssize_t size;
+    char data[1024]; ssize_t size;
     while ((size = ::read(fd_, data, sizeof(data))) > 0) receiveBuffer_.append(data, static_cast<int>(size));
-    int end;
-    while ((end = receiveBuffer_.indexOf('\n')) >= 0) { const QByteArray line = receiveBuffer_.left(end).trimmed(); receiveBuffer_.remove(0, end + 1); if (!line.isEmpty()) processLine(line); }
+    while (!receiveBuffer_.isEmpty()) {
+        if (operation_ == OtaWaitingPrompt && receiveBuffer_.startsWith('>')) {
+            receiveBuffer_.remove(0, 1);
+            if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); }
+            continue;
+        }
+        if (operation_ == OtaReceiving && receiveBuffer_.startsWith("+IPD,")) {
+            const int colon = receiveBuffer_.indexOf(':');
+            if (colon < 0) break;
+            const QByteArray header = receiveBuffer_.left(colon);
+            const int comma = header.lastIndexOf(',');
+            bool ok = false; const int length = header.mid(comma + 1).toInt(&ok);
+            if (!ok || length < 0) { finishWithError(QStringLiteral("ESP8266 +IPD 长度解析失败")); return; }
+            if (receiveBuffer_.size() < colon + 1 + length) break;
+            const QByteArray payload = receiveBuffer_.mid(colon + 1, length);
+            receiveBuffer_.remove(0, colon + 1 + length);
+            processIpdPayload(payload);
+            continue;
+        }
+        const int end = receiveBuffer_.indexOf('\n');
+        if (end < 0) break;
+        const QByteArray line = receiveBuffer_.left(end).trimmed();
+        receiveBuffer_.remove(0, end + 1);
+        if (!line.isEmpty()) processLine(line);
+    }
+}
+
+void Esp8266Controller::processIpdPayload(const QByteArray &payload)
+{
+    processHttpData(payload);
+}
+
+void Esp8266Controller::processHttpData(const QByteArray &data)
+{
+    if (!otaHeadersParsed_) {
+        otaHttpHeaders_.append(data);
+        const int separator = otaHttpHeaders_.indexOf("\r\n\r\n");
+        if (separator < 0) return;
+        const QByteArray body = otaHttpHeaders_.mid(separator + 4);
+        const QByteArray headers = otaHttpHeaders_.left(separator);
+        otaHttpHeaders_ = headers;
+        otaHeadersParsed_ = true;
+        const QList<QByteArray> lines = headers.split('\n');
+        if (lines.isEmpty() || !lines.first().contains(" 200 ")) { finishWithError(QStringLiteral("OTA HTTP 响应失败: %1").arg(QString::fromLatin1(lines.value(0)))); return; }
+        QRegularExpression expression(QStringLiteral("(?im)^Content-Length:\\s*(\\d+)") );
+        const QRegularExpressionMatch match = expression.match(QString::fromLatin1(headers));
+        if (!match.hasMatch()) { finishWithError(QStringLiteral("OTA 响应缺少 Content-Length")); return; }
+        otaExpectedBytes_ = match.captured(1).toLongLong();
+        if (otaDownloadingFile_) {
+            delete otaFile_; otaFile_ = new QFile(QStringLiteral("/tmp/environment_monitor.new"));
+            if (!otaFile_->open(QIODevice::WriteOnly | QIODevice::Truncate)) { finishWithError(QStringLiteral("无法创建 OTA 临时文件")); return; }
+        }
+        if (!body.isEmpty()) processHttpData(body);
+        return;
+    }
+    if (data.isEmpty()) return;
+    if (otaDownloadingFile_) {
+        if (!otaFile_ || otaFile_->write(data) != data.size()) { finishWithError(QStringLiteral("写入 OTA 临时文件失败")); return; }
+    } else otaHttpBody_.append(data);
+    otaReceivedBytes_ += data.size();
+    emit otaProgress(otaReceivedBytes_, otaExpectedBytes_);
+    if (otaReceivedBytes_ >= otaExpectedBytes_) finishHttpResponse();
+}
+
+void Esp8266Controller::finishHttpResponse()
+{
+    timeoutTimer_->stop();
+    if (otaDownloadingFile_) {
+        if (otaFile_) { otaFile_->flush(); otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
+        QFile file(QStringLiteral("/tmp/environment_monitor.new"));
+        if (!file.open(QIODevice::ReadOnly)) { finishWithError(QStringLiteral("无法读取 OTA 临时文件")); return; }
+        if (file.size() != otaExpectedFileBytes_) { file.close(); QFile::remove(file.fileName()); finishWithError(QStringLiteral("OTA 文件大小校验失败")); return; }
+        const QString hash = QString::fromLatin1(QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256).toHex());
+        if (hash.compare(otaFileSha256_, Qt::CaseInsensitive) != 0) { file.close(); QFile::remove(file.fileName()); finishWithError(QStringLiteral("OTA SHA256 校验失败")); return; }
+        file.close();
+        writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n")); operation_ = Idle;
+        emit otaPackageReady(otaVersion_, file.fileName());
+        return;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(otaHttpBody_);
+    const QJsonObject manifest = document.object();
+    otaVersion_ = manifest.value(QStringLiteral("version")).toString();
+    otaFilePath_ = manifest.value(QStringLiteral("path")).toString();
+    otaFileSha256_ = manifest.value(QStringLiteral("sha256")).toString().trimmed();
+    const qint64 size = static_cast<qint64>(manifest.value(QStringLiteral("size")).toDouble());
+    if (!otaFilePath_.startsWith(QLatin1Char('/')) || otaFilePath_.contains(QStringLiteral("..")) ||
+        otaVersion_.isEmpty() || otaFileSha256_.size() != 64 || size <= 0) {
+        finishWithError(QStringLiteral("OTA manifest.json 内容不完整或路径不安全")); return;
+    }
+    otaExpectedFileBytes_ = size;
+    otaDownloadingFile_ = true; otaExpectedBytes_ = 0; otaReceivedBytes_ = 0;
+    writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n")); operation_ = Idle;
+    QTimer::singleShot(200, this, &Esp8266Controller::beginOtaConnection);
 }
 
 void Esp8266Controller::processLine(const QByteArray &line)
@@ -106,8 +243,7 @@ void Esp8266Controller::processLine(const QByteArray &line)
         if (match.hasMatch()) {
             WifiNetwork network{match.captured(2), match.captured(3).toInt(), match.captured(1).toInt()};
             auto it = std::find_if(networks_.begin(), networks_.end(), [&network](const WifiNetwork &value) { return value.ssid == network.ssid; });
-            if (it == networks_.end()) networks_.append(network);
-            else if (network.rssi > it->rssi) *it = network;
+            if (it == networks_.end()) networks_.append(network); else if (network.rssi > it->rssi) *it = network;
         }
         return;
     }
@@ -115,16 +251,21 @@ void Esp8266Controller::processLine(const QByteArray &line)
     if (operation_ == WaitingForScanMode && text == QStringLiteral("OK")) { operation_ = Scanning; sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000); }
     else if (operation_ == Scanning && text == QStringLiteral("OK")) { timeoutTimer_->stop(); std::sort(networks_.begin(), networks_.end(), [](const WifiNetwork &a, const WifiNetwork &b) { return a.rssi > b.rssi; }); operation_ = Idle; emit scanFinished(networks_); }
     else if (operation_ == Connecting && text == QStringLiteral("OK")) { operation_ = QueryingIp; sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000); }
-    else if (operation_ == QueryingIp && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) {
-        timeoutTimer_->stop(); operation_ = Idle; emit connectionStateChanged(true, text);
-    }
+    else if (operation_ == QueryingIp && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) { timeoutTimer_->stop(); operation_ = Idle; emit connectionStateChanged(true, text); }
     else if (operation_ == QueryingIp && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
-    else if (operation_ == Idle && text == QStringLiteral("OK")) timeoutTimer_->stop();
+    else if (operation_ == OtaConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("OK"))) { if (!otaPromptHandled_) { otaPromptHandled_ = true; sendOtaRequest(); } }
+    else if (operation_ == OtaWaitingPrompt && text == QStringLiteral(">")) { if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); } }
     else if (text == QStringLiteral("WIFI DISCONNECT")) emit connectionStateChanged(false, QStringLiteral("WiFi 已断开"));
 }
 
-void Esp8266Controller::timeout() { finishWithError(QStringLiteral("ESP8266 响应超时, 请检查接线和波特率")); }
-void Esp8266Controller::finishWithError(const QString &message) { timeoutTimer_->stop(); operation_ = Idle; emit operationFailed(message); }
+void Esp8266Controller::timeout() { finishWithError(QStringLiteral("ESP8266 响应超时, 请检查 WiFi, 服务器地址和串口连接")); }
+void Esp8266Controller::finishWithError(const QString &message)
+{
+    timeoutTimer_->stop();
+    if (otaFile_) { otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
+    if (otaDownloadingFile_) QFile::remove(QStringLiteral("/tmp/environment_monitor.new"));
+    operation_ = Idle; emit operationFailed(message);
+}
 QString Esp8266Controller::escapeArgument(const QString &value)
 {
     QString escaped = value; escaped.replace(QStringLiteral("\\"), QStringLiteral("\\\\")); escaped.replace(QStringLiteral("\""), QStringLiteral("\\\"")); return escaped;

@@ -37,4 +37,5 @@ endif()
 
 if (UNIX AND NOT APPLE)
     install(TARGETS environment_monitor RUNTIME DESTINATION bin)
+    install(PROGRAMS scripts/environment_monitor_ota_apply.sh DESTINATION bin)
 endif()
