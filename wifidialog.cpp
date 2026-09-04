@@ -13,6 +13,10 @@
 #include <QProgressBar>
 #include <QProcess>
 #include <QFileInfo>
+#include <QSettings>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QResizeEvent>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
@@ -31,11 +35,11 @@ WifiDialog::WifiDialog(QWidget *parent)
       otaPortEdit_(new QLineEdit(QStringLiteral("8080"))),
       otaManifestEdit_(new QLineEdit(QStringLiteral("/manifest.json"))),
       otaButton_(new QPushButton(QStringLiteral("检查并升级应用"))), otaProgress_(new QProgressBar),
-      keyboardPanel_(new QWidget), keyboardEdit_(nullptr)
+      keyboardPanel_(new QWidget(this)), keyboardEdit_(nullptr), closeAllowed_(false)
 {
     setWindowTitle(QStringLiteral("ESP8266 WiFi 配置"));
-    resize(620, 480);
-    qApp->installEventFilter(this);
+    const QRect screen = QGuiApplication::primaryScreen()->availableGeometry();
+    resize(qMin(620, screen.width() - 20), qMin(460, screen.height() - 20));
 
     const QStringList ports = Esp8266Controller::availablePorts();
     for (const QString &port : ports) portCombo_->addItem(port, port);
@@ -46,8 +50,8 @@ WifiDialog::WifiDialog(QWidget *parent)
     passwordEdit_->setEchoMode(QLineEdit::Password);
 
     auto *closeButton = new QPushButton(QStringLiteral("×"));
-    closeButton->setFixedSize(44, 38);
-    connect(closeButton, &QPushButton::clicked, this, &QDialog::reject);
+    closeButton->setFixedSize(34, 30);
+    connect(closeButton, &QPushButton::clicked, this, [this] { if (closeAllowed_) reject(); });
     auto *titleLayout = new QHBoxLayout;
     titleLayout->addWidget(new QLabel(QStringLiteral("WiFi 配置")));
     titleLayout->addStretch();
@@ -60,8 +64,20 @@ WifiDialog::WifiDialog(QWidget *parent)
 
     auto *networkForm = new QFormLayout;
     networkForm->addRow(QStringLiteral("SSID"), ssidEdit_);
-    networkForm->addRow(QStringLiteral("密码"), passwordEdit_);
+    auto *passwordLayout = new QHBoxLayout;
+    passwordLayout->setContentsMargins(0, 0, 0, 0);
+    passwordLayout->addWidget(passwordEdit_);
+    auto *showPassword = new QPushButton(QStringLiteral("显示"));
+    showPassword->setCheckable(true);
+    showPassword->setFixedWidth(58);
+    connect(showPassword, &QPushButton::toggled, this, [this](bool visible) {
+        passwordEdit_->setEchoMode(visible ? QLineEdit::Normal : QLineEdit::Password);
+    });
+    passwordLayout->addWidget(showPassword);
+    networkForm->addRow(QStringLiteral("密码"), passwordLayout);
     networkForm->addRow(QString(), connectButton_);
+
+    loadSettings();
 
     networkTable_->setHorizontalHeaderLabels({QStringLiteral("SSID"), QStringLiteral("信号"), QStringLiteral("加密")});
     networkTable_->horizontalHeader()->setStretchLastSection(true);
@@ -89,17 +105,22 @@ WifiDialog::WifiDialog(QWidget *parent)
 
     keyboardPanel_->setVisible(false);
     auto *keyboardLayout = new QGridLayout(keyboardPanel_);
+    auto *keyboardTitle = new QLabel(QStringLiteral("触摸键盘"));
+    auto *collapseKeyboard = new QPushButton(QStringLiteral("收起键盘"));
+    connect(collapseKeyboard, &QPushButton::clicked, this, &WifiDialog::hideKeyboard);
+    keyboardLayout->addWidget(keyboardTitle, 0, 0, 1, 8);
+    keyboardLayout->addWidget(collapseKeyboard, 0, 8, 1, 2);
     const QStringList keys = {QStringLiteral("1"), QStringLiteral("2"), QStringLiteral("3"), QStringLiteral("4"), QStringLiteral("5"), QStringLiteral("6"), QStringLiteral("7"), QStringLiteral("8"), QStringLiteral("9"), QStringLiteral("0"),
                               QStringLiteral("q"), QStringLiteral("w"), QStringLiteral("e"), QStringLiteral("r"), QStringLiteral("t"), QStringLiteral("y"), QStringLiteral("u"), QStringLiteral("i"), QStringLiteral("o"), QStringLiteral("p"),
                               QStringLiteral("a"), QStringLiteral("s"), QStringLiteral("d"), QStringLiteral("f"), QStringLiteral("g"), QStringLiteral("h"), QStringLiteral("j"), QStringLiteral("k"), QStringLiteral("l"),
                               QStringLiteral("z"), QStringLiteral("x"), QStringLiteral("c"), QStringLiteral("v"), QStringLiteral("b"), QStringLiteral("n"), QStringLiteral("m"), QStringLiteral("."), QStringLiteral("_"), QStringLiteral("-")};
     for (int i = 0; i < keys.size(); ++i) {
         auto *key = new QPushButton(keys.at(i));
-        key->setMinimumHeight(34);
+        key->setMinimumHeight(27);
         connect(key, &QPushButton::clicked, this, [this, key] {
             if (keyboardEdit_) keyboardEdit_->insert(key->text());
         });
-        keyboardLayout->addWidget(key, i / 10, i % 10);
+        keyboardLayout->addWidget(key, i / 10 + 1, i % 10);
     }
     auto *backspace = new QPushButton(QStringLiteral("退格"));
     auto *space = new QPushButton(QStringLiteral("空格"));
@@ -115,11 +136,10 @@ WifiDialog::WifiDialog(QWidget *parent)
         if (keyboardEdit_) keyboardEdit_->clear();
     });
     connect(done, &QPushButton::clicked, this, &WifiDialog::hideKeyboard);
-    keyboardLayout->addWidget(backspace, 4, 0, 1, 3);
-    keyboardLayout->addWidget(space, 4, 3, 1, 4);
-    keyboardLayout->addWidget(clear, 4, 7, 1, 2);
-    keyboardLayout->addWidget(done, 4, 9);
-    layout->addWidget(keyboardPanel_);
+    keyboardLayout->addWidget(backspace, 5, 0, 1, 3);
+    keyboardLayout->addWidget(space, 5, 3, 1, 4);
+    keyboardLayout->addWidget(clear, 5, 7, 1, 2);
+    keyboardLayout->addWidget(done, 5, 9);
 
     ssidEdit_->installEventFilter(this);
     passwordEdit_->installEventFilter(this);
@@ -149,19 +169,66 @@ WifiDialog::WifiDialog(QWidget *parent)
     });
 }
 
+WifiDialog::~WifiDialog()
+{
+    saveSettings();
+}
+
+void WifiDialog::loadSettings()
+{
+    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    const QString savedPort = settings.value(QStringLiteral("wifi/serialPort"), QStringLiteral("/dev/ttymxc3")).toString();
+    const int portIndex = portCombo_->findData(savedPort);
+    if (portIndex >= 0) portCombo_->setCurrentIndex(portIndex);
+    ssidEdit_->setText(settings.value(QStringLiteral("wifi/ssid")).toString());
+    passwordEdit_->setText(settings.value(QStringLiteral("wifi/password")).toString());
+    otaHostEdit_->setText(settings.value(QStringLiteral("ota/host"), otaHostEdit_->text()).toString());
+    otaPortEdit_->setText(settings.value(QStringLiteral("ota/port"), otaPortEdit_->text()).toString());
+    otaManifestEdit_->setText(settings.value(QStringLiteral("ota/manifest"), otaManifestEdit_->text()).toString());
+}
+
+void WifiDialog::saveSettings() const
+{
+    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    settings.setValue(QStringLiteral("wifi/serialPort"), portCombo_->currentData().toString());
+    settings.setValue(QStringLiteral("wifi/ssid"), ssidEdit_->text());
+    settings.setValue(QStringLiteral("wifi/password"), passwordEdit_->text());
+    settings.setValue(QStringLiteral("ota/host"), otaHostEdit_->text());
+    settings.setValue(QStringLiteral("ota/port"), otaPortEdit_->text());
+    settings.setValue(QStringLiteral("ota/manifest"), otaManifestEdit_->text());
+    settings.sync();
+}
+
+void WifiDialog::showEvent(QShowEvent *event)
+{
+    QDialog::showEvent(event);
+    closeAllowed_ = false;
+    QTimer::singleShot(500, this, [this] { closeAllowed_ = true; });
+}
+
+
+void WifiDialog::resizeEvent(QResizeEvent *event)
+{
+    QDialog::resizeEvent(event);
+    if (keyboardPanel_->isVisible()) {
+        const int panelHeight = qMin(205, height() - 16);
+        keyboardPanel_->setGeometry(8, height() - panelHeight - 8, width() - 16, panelHeight);
+        keyboardPanel_->raise();
+    }
+}
+
 bool WifiDialog::eventFilter(QObject *watched, QEvent *event)
 {
-    if (event->type() == QEvent::FocusIn) {
+    if (event->type() == QEvent::MouseButtonPress) {
         if (auto *edit = qobject_cast<QLineEdit *>(watched)) {
             showKeyboard(edit);
             return QDialog::eventFilter(watched, event);
         }
     }
-    if (event->type() == QEvent::MouseButtonPress && isVisible()) {
-        auto *widget = qobject_cast<QWidget *>(watched);
-        if (widget && widget->window() != this) {
-            hide();
-            return true;
+    if (event->type() == QEvent::FocusIn) {
+        if (auto *edit = qobject_cast<QLineEdit *>(watched)) {
+            showKeyboard(edit);
+            return QDialog::eventFilter(watched, event);
         }
     }
     return QDialog::eventFilter(watched, event);
@@ -182,6 +249,9 @@ void WifiDialog::showKeyboard(QLineEdit *edit)
 {
     keyboardEdit_ = edit;
     keyboardPanel_->setVisible(true);
+    const int panelHeight = qMin(205, height() - 16);
+    keyboardPanel_->setGeometry(8, height() - panelHeight - 8, width() - 16, panelHeight);
+    keyboardPanel_->raise();
     edit->setFocus();
 }
 
@@ -200,6 +270,7 @@ void WifiDialog::scanNetworks()
 void WifiDialog::connectNetwork()
 {
     if (ssidEdit_->text().isEmpty()) { showError(QStringLiteral("请输入 WiFi 名称")); return; }
+    saveSettings();
     controller_.connectNetwork(ssidEdit_->text(), passwordEdit_->text());
     setBusy(true);
 }
@@ -247,6 +318,7 @@ void WifiDialog::startOta()
     const quint16 port = otaPortEdit_->text().toUShort(&ok);
     if (!ok || port == 0) { showError(QStringLiteral("HTTP 端口无效")); return; }
     if (!controller_.isOpen()) { showError(QStringLiteral("请先连接 ESP8266 WiFi")); return; }
+    saveSettings();
     otaButton_->setEnabled(false);
     otaProgress_->setValue(0);
     statusLabel_->setText(QStringLiteral("正在通过 WiFi 检查 OTA 更新..."));

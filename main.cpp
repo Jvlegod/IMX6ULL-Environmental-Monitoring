@@ -5,7 +5,7 @@
 #include <QAbstractButton>
 #include <QElapsedTimer>
 #include <QEvent>
-#include <QMouseEvent>
+#include <QHash>
 #include <QObject>
 
 class TouchDebounceFilter final : public QObject
@@ -15,9 +15,12 @@ public:
     {
         if (event->type() != QEvent::MouseButtonRelease || !qobject_cast<QAbstractButton *>(watched))
             return QObject::eventFilter(watched, event);
-        const qint64 now = timer_.isValid() ? timer_.elapsed() : 1000;
-        timer_.start();
-        if (now < 300) {
+        if (!timer_.isValid()) timer_.start();
+        const qint64 now = timer_.elapsed();
+        auto *button = qobject_cast<QAbstractButton *>(watched);
+        const qint64 last = lastRelease_.value(button, -1000);
+        lastRelease_.insert(button, now);
+        if (now - last < 300) {
             event->accept();
             return true;
         }
@@ -26,6 +29,7 @@ public:
 
 private:
     QElapsedTimer timer_;
+    QHash<QAbstractButton *, qint64> lastRelease_;
 };
 
 int main(int argc, char *argv[])

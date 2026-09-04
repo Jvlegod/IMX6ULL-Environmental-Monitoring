@@ -44,7 +44,7 @@ private slots:
 
 private:
     enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp,
-                     OtaConnecting, OtaWaitingPrompt, OtaReceiving };
+                     OtaSettingMode, OtaClosing, OtaConnecting, OtaWaitingPrompt, OtaReceiving };
     void sendCommand(const QByteArray &command, int timeoutMs);
     void sendOtaRequest();
     void processLine(const QByteArray &line);
@@ -54,6 +54,7 @@ private:
     void finishWithError(const QString &message);
     static QString escapeArgument(const QString &value);
     void beginOtaConnection();
+    void beginOtaTcpConnection();
     bool writeSerial(const QByteArray &data);
 
     int fd_;

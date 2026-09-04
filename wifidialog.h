@@ -13,16 +13,21 @@ class QProgressBar;
 class QTableWidget;
 class QWidget;
 class QKeyEvent;
+class QResizeEvent;
+class QShowEvent;
 
 class WifiDialog final : public QDialog
 {
     Q_OBJECT
 public:
     explicit WifiDialog(QWidget *parent = nullptr);
+    ~WifiDialog() override;
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 signals:
     void wifiStateChanged(bool connected, const QString &detail);
@@ -40,6 +45,8 @@ private slots:
 
 private:
     void setBusy(bool busy);
+    void loadSettings();
+    void saveSettings() const;
     void showKeyboard(QLineEdit *edit);
     void hideKeyboard();
 
@@ -58,6 +65,7 @@ private:
     QLabel *statusLabel_;
     QWidget *keyboardPanel_;
     QLineEdit *keyboardEdit_;
+    bool closeAllowed_;
 };
 
 #endif

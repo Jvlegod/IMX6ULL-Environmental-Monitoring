@@ -88,7 +88,7 @@ void Esp8266Controller::connectNetwork(const QString &ssid, const QString &passw
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
     if (simulated_) { QTimer::singleShot(900, this, [this, ssid] { emit connectionStateChanged(true, QStringLiteral("已连接 %1 · 192.168.1.108").arg(ssid)); }); return; }
     operation_ = Connecting;
-    const QString command = QStringLiteral("AT+CWJAP_CUR=\"%1\",\"%2\"\r\n").arg(escapeArgument(ssid), escapeArgument(password));
+    const QString command = QStringLiteral("AT+CWJAP=\"%1\",\"%2\"\r\n").arg(escapeArgument(ssid), escapeArgument(password));
     sendCommand(command.toUtf8(), 25000);
 }
 
@@ -108,6 +108,12 @@ void Esp8266Controller::startOta(const QString &host, quint16 port, const QStrin
 }
 
 void Esp8266Controller::beginOtaConnection()
+{
+    operation_ = OtaSettingMode;
+    sendCommand(QByteArrayLiteral("AT+CIPMODE=0\r\n"), 3000);
+}
+
+void Esp8266Controller::beginOtaTcpConnection()
 {
     otaPromptHandled_ = false; otaHeadersParsed_ = false; otaHttpBody_.clear(); otaHttpHeaders_.clear();
     operation_ = OtaConnecting;
@@ -252,13 +258,22 @@ void Esp8266Controller::processLine(const QByteArray &line)
         sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000);
         return;
     }
+    if (operation_ == OtaSettingMode && (text == QStringLiteral("OK") || text == QStringLiteral("ERROR"))) {
+        operation_ = OtaClosing;
+        sendCommand(QByteArrayLiteral("AT+CIPCLOSE\r\n"), 2000);
+        return;
+    }
+    if (operation_ == OtaClosing && (text == QStringLiteral("OK") || text == QStringLiteral("ERROR"))) {
+        beginOtaTcpConnection();
+        return;
+    }
     if (text == QStringLiteral("ERROR") || text == QStringLiteral("FAIL") || text.startsWith(QStringLiteral("+CWJAP:"))) { finishWithError(QStringLiteral("ESP8266 返回: %1").arg(text)); return; }
     if (operation_ == WaitingForScanMode && text == QStringLiteral("OK")) { operation_ = Scanning; sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000); }
     else if (operation_ == Scanning && text == QStringLiteral("OK")) { timeoutTimer_->stop(); std::sort(networks_.begin(), networks_.end(), [](const WifiNetwork &a, const WifiNetwork &b) { return a.rssi > b.rssi; }); operation_ = Idle; emit scanFinished(networks_); }
     else if (operation_ == Connecting && text == QStringLiteral("OK")) { operation_ = QueryingIp; sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000); }
     else if (operation_ == QueryingIp && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) { timeoutTimer_->stop(); operation_ = Idle; emit connectionStateChanged(true, text); }
     else if (operation_ == QueryingIp && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
-    else if (operation_ == OtaConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("OK"))) { if (!otaPromptHandled_) { otaPromptHandled_ = true; sendOtaRequest(); } }
+    else if (operation_ == OtaConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) { if (!otaPromptHandled_) sendOtaRequest(); }
     else if (operation_ == OtaWaitingPrompt && text == QStringLiteral(">")) { if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); } }
     else if (text == QStringLiteral("WIFI DISCONNECT")) emit connectionStateChanged(false, QStringLiteral("WiFi 已断开"));
 }
