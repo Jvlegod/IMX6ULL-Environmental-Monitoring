@@ -17,6 +17,8 @@ endif()
 
 add_executable(environment_monitor
     main.cpp
+    appsettings.cpp
+    appsettings.h
     sensorprovider.cpp
     sensorprovider.h
     mainwindow.cpp

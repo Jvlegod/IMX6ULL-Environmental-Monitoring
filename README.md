@@ -49,11 +49,13 @@ The dashboard provides sampling intervals of 1, 5, 10, 30 and 60 seconds. The se
 
 The threshold dialog supports minimum and maximum values for temperature, humidity, pressure and illuminance. A snapshot is marked abnormal when a value is outside its configured range or is not finite. The current reporting action is the on-screen alert banner only.
 
-The settings are stored for the current target user under:
+On the embedded board, settings use a stable path that is not replaced by application OTA:
 
 ```text
-~/.config/jvle/environment_monitor.conf
+/etc/environment_monitor/settings.ini
 ```
+
+Desktop builds use the standard writable application configuration directory. The first run of the new path migrates the previous `~/.config/jvle/environment_monitor.conf` when it exists.
 
 ## Independent acquisition tasks
 

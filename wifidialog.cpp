@@ -1,4 +1,5 @@
 #include "wifidialog.h"
+#include "appsettings.h"
 
 #include <QCoreApplication>
 #include <QApplication>
@@ -176,7 +177,7 @@ WifiDialog::~WifiDialog()
 
 void WifiDialog::loadSettings()
 {
-    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
     const QString savedPort = settings.value(QStringLiteral("wifi/serialPort"), QStringLiteral("/dev/ttymxc3")).toString();
     const int portIndex = portCombo_->findData(savedPort);
     if (portIndex >= 0) portCombo_->setCurrentIndex(portIndex);
@@ -189,7 +190,7 @@ void WifiDialog::loadSettings()
 
 void WifiDialog::saveSettings() const
 {
-    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
     settings.setValue(QStringLiteral("wifi/serialPort"), portCombo_->currentData().toString());
     settings.setValue(QStringLiteral("wifi/ssid"), ssidEdit_->text());
     settings.setValue(QStringLiteral("wifi/password"), passwordEdit_->text());

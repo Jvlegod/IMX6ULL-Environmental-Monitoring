@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include "appsettings.h"
 #include "trendchart.h"
 #include "wifidialog.h"
 #include <QApplication>
@@ -166,7 +167,7 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
 
 void MainWindow::loadSettings()
 {
-    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
     const int intervalSeconds = settings.value(QStringLiteral("sampling/intervalSeconds"), 10).toInt();
     const int intervalIndex = samplingIntervalCombo_->findData(intervalSeconds);
     samplingIntervalCombo_->setCurrentIndex(intervalIndex >= 0 ? intervalIndex : 2);
@@ -182,7 +183,7 @@ void MainWindow::loadSettings()
 
 void MainWindow::saveThresholds()
 {
-    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
     settings.setValue(QStringLiteral("thresholds/temperatureMinimum"), temperatureMinimum_);
     settings.setValue(QStringLiteral("thresholds/temperatureMaximum"), temperatureMaximum_);
     settings.setValue(QStringLiteral("thresholds/humidityMinimum"), humidityMinimum_);
@@ -199,7 +200,7 @@ void MainWindow::updateSamplingInterval(int index)
     if (index < 0) return;
     const int intervalSeconds = samplingIntervalCombo_->itemData(index).toInt();
     provider_->setSamplingInterval(intervalSeconds * 1000);
-    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
     settings.setValue(QStringLiteral("sampling/intervalSeconds"), intervalSeconds);
     settings.sync();
 }
@@ -268,7 +269,7 @@ void MainWindow::showAcquisitionDialog()
     endLayout->addWidget(endTime);
     form->addRow(QStringLiteral("结束时间"), endRow);
 
-    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
     QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (defaultPath.isEmpty()) defaultPath = QDir::tempPath();
     defaultPath += QStringLiteral("/acquisition.csv");
