@@ -289,6 +289,15 @@ Connection: close
 
 如果新程序启动失败, 脚本会使用 `.backup` 文件恢复旧程序. 因此 OTA 更新的是应用文件, 而不是正在运行的 Qt 进程本身.
 
+新程序通过 BusyBox `nohup` 启动, 标准输入连接到 `/dev/null`, 输出保存到:
+
+```text
+/tmp/environment_monitor_ota.log
+/tmp/environment_monitor_ota_rollback.log
+```
+
+这样新程序不会依赖启动 OTA 的串口 shell 会话. 若升级后界面没有出现, 先查看 `/tmp/environment_monitor_ota.log`.
+
 ### 10.5 服务器和 rootfs 的关系
 
 `scripts/start_ota_server.sh` 只负责电脑端工作:
