@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QGuiApplication>
+#include <QScrollArea>
 #include <QScreen>
 #include <QResizeEvent>
 #include <QTableWidget>
@@ -100,9 +101,16 @@ WifiDialog::WifiDialog(QWidget *parent)
     layout->addLayout(portLayout);
     layout->addWidget(statusLabel_);
     layout->addWidget(scanButton_, 0, Qt::AlignLeft);
-    layout->addWidget(networkTable_, 1);
-    layout->addLayout(networkForm);
-    layout->addLayout(otaForm);
+    auto *scrollContents = new QWidget;
+    auto *scrollLayout = new QVBoxLayout(scrollContents);
+    scrollLayout->addWidget(networkTable_, 1);
+    scrollLayout->addLayout(networkForm);
+    scrollLayout->addLayout(otaForm);
+    auto *scrollArea = new QScrollArea;
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setWidget(scrollContents);
+    layout->addWidget(scrollArea, 1);
 
     keyboardPanel_->setVisible(false);
     auto *keyboardLayout = new QGridLayout(keyboardPanel_);
@@ -117,7 +125,7 @@ WifiDialog::WifiDialog(QWidget *parent)
                               QStringLiteral("z"), QStringLiteral("x"), QStringLiteral("c"), QStringLiteral("v"), QStringLiteral("b"), QStringLiteral("n"), QStringLiteral("m"), QStringLiteral("."), QStringLiteral("_"), QStringLiteral("-")};
     for (int i = 0; i < keys.size(); ++i) {
         auto *key = new QPushButton(keys.at(i));
-        key->setMinimumHeight(27);
+        key->setMinimumHeight(21);
         connect(key, &QPushButton::clicked, this, [this, key] {
             if (keyboardEdit_) keyboardEdit_->insert(key->text());
         });
@@ -141,7 +149,13 @@ WifiDialog::WifiDialog(QWidget *parent)
     keyboardLayout->addWidget(space, 5, 3, 1, 4);
     keyboardLayout->addWidget(clear, 5, 7, 1, 2);
     keyboardLayout->addWidget(done, 5, 9);
+    keyboardPanel_->setMaximumHeight(175);
+    keyboardPanel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    keyboardPanel_->setAttribute(Qt::WA_StyledBackground, true);
+    keyboardPanel_->setStyleSheet(QStringLiteral("background: #e8edf0; border: 1px solid #b9c5cc;"));
+    layout->addWidget(keyboardPanel_);
 
+    qApp->installEventFilter(this);
     ssidEdit_->installEventFilter(this);
     passwordEdit_->installEventFilter(this);
     otaHostEdit_->installEventFilter(this);
@@ -172,6 +186,7 @@ WifiDialog::WifiDialog(QWidget *parent)
 
 WifiDialog::~WifiDialog()
 {
+    qApp->removeEventFilter(this);
     saveSettings();
 }
 
@@ -211,15 +226,20 @@ void WifiDialog::showEvent(QShowEvent *event)
 void WifiDialog::resizeEvent(QResizeEvent *event)
 {
     QDialog::resizeEvent(event);
-    if (keyboardPanel_->isVisible()) {
-        const int panelHeight = qMin(205, height() - 16);
-        keyboardPanel_->setGeometry(8, height() - panelHeight - 8, width() - 16, panelHeight);
-        keyboardPanel_->raise();
-    }
 }
 
 bool WifiDialog::eventFilter(QObject *watched, QEvent *event)
 {
+    if (event->type() == QEvent::MouseButtonPress && keyboardPanel_->isVisible()) {
+        auto *widget = qobject_cast<QWidget *>(watched);
+        const bool isDialogWidget = widget && (widget == this || isAncestorOf(widget));
+        const bool isKeyboardWidget = widget && (widget == keyboardPanel_ || keyboardPanel_->isAncestorOf(widget));
+        if (isDialogWidget && !isKeyboardWidget) {
+            const bool isLineEdit = qobject_cast<QLineEdit *>(watched);
+            hideKeyboard();
+            if (!isLineEdit) return true;
+        }
+    }
     if (event->type() == QEvent::MouseButtonPress) {
         if (auto *edit = qobject_cast<QLineEdit *>(watched)) {
             showKeyboard(edit);
@@ -250,9 +270,6 @@ void WifiDialog::showKeyboard(QLineEdit *edit)
 {
     keyboardEdit_ = edit;
     keyboardPanel_->setVisible(true);
-    const int panelHeight = qMin(205, height() - 16);
-    keyboardPanel_->setGeometry(8, height() - panelHeight - 8, width() - 16, panelHeight);
-    keyboardPanel_->raise();
     edit->setFocus();
 }
 
