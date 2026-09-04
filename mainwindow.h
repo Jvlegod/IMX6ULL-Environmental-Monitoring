@@ -12,6 +12,7 @@ class QLabel;
 class QComboBox;
 class QPushButton;
 class QTableWidget;
+class QTableWidgetItem;
 class QTimer;
 QT_END_NAMESPACE
 class TrendChart;
@@ -31,6 +32,7 @@ private slots:
     void showAcquisitionDialog();
     void updateSamplingInterval(int index);
     void handleAcquisitionTimer();
+    void updateEnabledDevices(QTableWidgetItem *item);
 private:
     QWidget *makeMetricCard(const QString &title, const QString &accent,
                             QLabel **valueLabel, QLabel **unitLabel);
@@ -43,6 +45,7 @@ private:
     void stopAcquisition(const QString &message);
     void scheduleAcquisitionTimer(const QDateTime &target);
     void recordSnapshot(const SensorSnapshot &snapshot);
+    void startConfiguredSampling();
     ISensorProvider *provider_;
     QPushButton *samplingButton_;
     QPushButton *acquisitionButton_;
@@ -50,7 +53,6 @@ private:
     QComboBox *samplingIntervalCombo_;
     QLabel *lastUpdateLabel_;
     QLabel *alertLabel_;
-    QLabel *acquisitionStatusLabel_;
     QLabel *temperatureValue_;
     QLabel *temperatureUnit_;
     QLabel *humidityValue_;
@@ -83,6 +85,7 @@ private:
     bool acquisitionActive_;
     bool acquisitionScheduled_;
     bool samplingActive_;
+    int enabledDeviceMask_;
 };
 
 #endif

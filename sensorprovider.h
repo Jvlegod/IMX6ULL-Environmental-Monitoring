@@ -59,6 +59,7 @@ private slots:
     void sample();
 
 private:
+    void updateDeviceStatuses();
     class QTimer *timer_;
     int sampleIndex_;
     int enabledDevices_;

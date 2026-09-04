@@ -4,7 +4,6 @@
 #include "trendchart.h"
 #include "wifidialog.h"
 #include <QApplication>
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -20,6 +19,7 @@
 #include <QLineEdit>
 #include <QScreen>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -36,12 +36,20 @@
 
 namespace {
 const int kMaxPoints = 60;
+
+int sensorFlagForDevice(const QString &device)
+{
+    if (device == QStringLiteral("BMP280 / I2C")) return SensorBmp280;
+    if (device == QStringLiteral("RS485 温湿度计")) return SensorRs485;
+    if (device == QStringLiteral("VEML7700 / I2C")) return SensorVeml7700;
+    return 0;
+}
 }
 
 MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     : QMainWindow(parent), provider_(provider), samplingButton_(nullptr),
       acquisitionButton_(nullptr), thresholdButton_(nullptr), samplingIntervalCombo_(nullptr),
-      lastUpdateLabel_(nullptr), alertLabel_(nullptr), acquisitionStatusLabel_(nullptr), temperatureValue_(nullptr),
+      lastUpdateLabel_(nullptr), alertLabel_(nullptr), temperatureValue_(nullptr),
       temperatureUnit_(nullptr), humidityValue_(nullptr), humidityUnit_(nullptr),
       pressureValue_(nullptr), pressureUnit_(nullptr), illuminanceValue_(nullptr),
       illuminanceUnit_(nullptr), statusTable_(nullptr), chartView_(nullptr), wifiDialog_(nullptr),
@@ -50,7 +58,8 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
       pressureMinimum_(95.0), pressureMaximum_(106.0),
       illuminanceMinimum_(0.0), illuminanceMaximum_(2000.0),
       acquisitionTimer_(new QTimer(this)), acquisitionDeviceMask_(SensorAll),
-      acquisitionActive_(false), acquisitionScheduled_(false), samplingActive_(true)
+      acquisitionActive_(false), acquisitionScheduled_(false), samplingActive_(true),
+      enabledDeviceMask_(SensorAll)
 {
     setWindowTitle(QStringLiteral("IMX6ULL 环境监测系统"));
     resize(1100, 720);
@@ -79,6 +88,9 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     samplingButton_->setMinimumWidth(120);
     connect(samplingButton_, &QPushButton::clicked, this, &MainWindow::toggleSampling);
     header->addWidget(samplingButton_);
+    acquisitionButton_ = new QPushButton(QStringLiteral("采集时间"));
+    connect(acquisitionButton_, &QPushButton::clicked, this, &MainWindow::showAcquisitionDialog);
+    header->addWidget(acquisitionButton_);
     auto *wifiButton = new QPushButton(QStringLiteral("WiFi 配置"));
     wifiButton->setObjectName(QStringLiteral("samplingButton"));
     connect(wifiButton, &QPushButton::clicked, this, &MainWindow::showWifiDialog);
@@ -94,12 +106,8 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     samplingIntervalCombo_->addItem(QStringLiteral("30 秒"), 30);
     samplingIntervalCombo_->addItem(QStringLiteral("1 分钟"), 60);
     samplingControls->addWidget(samplingIntervalCombo_);
-    acquisitionButton_ = new QPushButton(QStringLiteral("采集任务"));
-    samplingControls->addWidget(acquisitionButton_);
     thresholdButton_ = new QPushButton(QStringLiteral("阈值设置"));
     samplingControls->addWidget(thresholdButton_);
-    acquisitionStatusLabel_ = new QLabel(QStringLiteral("任务未运行"));
-    samplingControls->addWidget(acquisitionStatusLabel_);
     samplingControls->addStretch();
     root->addLayout(samplingControls);
     loadSettings();
@@ -145,6 +153,7 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     statusTable_->verticalHeader()->setVisible(false);
     statusTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     statusTable_->setSelectionMode(QAbstractItemView::NoSelection);
+    connect(statusTable_, &QTableWidget::itemChanged, this, &MainWindow::updateEnabledDevices);
     statusLayout->addWidget(statusTable_);
     content->addWidget(statusPanel, 2);
     root->addLayout(content, 1);
@@ -161,10 +170,10 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
             [this](const QString &message) { setAlert(message, true); });
     connect(samplingIntervalCombo_, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
             this, &MainWindow::updateSamplingInterval);
-    connect(acquisitionButton_, &QPushButton::clicked, this, &MainWindow::showAcquisitionDialog);
     connect(thresholdButton_, &QPushButton::clicked, this, &MainWindow::showThresholdDialog);
     connect(acquisitionTimer_, &QTimer::timeout, this, &MainWindow::handleAcquisitionTimer);
     updateSamplingInterval(samplingIntervalCombo_->currentIndex());
+    provider_->setEnabledDevices(enabledDeviceMask_);
 }
 
 void MainWindow::loadSettings()
@@ -173,6 +182,7 @@ void MainWindow::loadSettings()
     const int intervalSeconds = settings.value(QStringLiteral("sampling/intervalSeconds"), 10).toInt();
     const int intervalIndex = samplingIntervalCombo_->findData(intervalSeconds);
     samplingIntervalCombo_->setCurrentIndex(intervalIndex >= 0 ? intervalIndex : 2);
+    enabledDeviceMask_ = settings.value(QStringLiteral("acquisition/deviceMask"), SensorAll).toInt() & SensorAll;
     temperatureMinimum_ = settings.value(QStringLiteral("thresholds/temperatureMinimum"), temperatureMinimum_).toDouble();
     temperatureMaximum_ = settings.value(QStringLiteral("thresholds/temperatureMaximum"), temperatureMaximum_).toDouble();
     humidityMinimum_ = settings.value(QStringLiteral("thresholds/humidityMinimum"), humidityMinimum_).toDouble();
@@ -209,37 +219,27 @@ void MainWindow::updateSamplingInterval(int index)
 
 void MainWindow::showAcquisitionDialog()
 {
-    if (acquisitionActive_ || acquisitionScheduled_) {
-        stopAcquisition(QStringLiteral("采集任务已停止"));
-        return;
-    }
-
     QDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("采集任务"));
+    dialog.setWindowTitle(QStringLiteral("采集设置"));
     dialog.setModal(true);
     const QRect screen = QGuiApplication::primaryScreen()->availableGeometry();
     dialog.resize(qMin(560, screen.width() - 20), qMin(460, screen.height() - 20));
 
     auto *form = new QFormLayout;
     QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
-    const int savedDeviceMask = settings.value(QStringLiteral("acquisition/deviceMask"), SensorAll).toInt();
-    auto *devices = new QWidget;
-    auto *deviceLayout = new QHBoxLayout(devices);
-    deviceLayout->setContentsMargins(0, 0, 0, 0);
-    auto *bmp280 = new QCheckBox(QStringLiteral("BMP280"));
-    auto *rs485 = new QCheckBox(QStringLiteral("RS485 温湿度计"));
-    auto *veml7700 = new QCheckBox(QStringLiteral("VEML7700"));
-    bmp280->setChecked(savedDeviceMask & SensorBmp280);
-    rs485->setChecked(savedDeviceMask & SensorRs485);
-    veml7700->setChecked(savedDeviceMask & SensorVeml7700);
-    deviceLayout->addWidget(bmp280);
-    deviceLayout->addWidget(rs485);
-    deviceLayout->addWidget(veml7700);
-    form->addRow(QStringLiteral("采集设备"), devices);
+    QStringList enabledDevices;
+    if (enabledDeviceMask_ & SensorBmp280) enabledDevices << QStringLiteral("BMP280");
+    if (enabledDeviceMask_ & SensorRs485) enabledDevices << QStringLiteral("RS485");
+    if (enabledDeviceMask_ & SensorVeml7700) enabledDevices << QStringLiteral("VEML7700");
+    form->addRow(QStringLiteral("已使能设备"), new QLabel(enabledDevices.isEmpty()
+                                                     ? QStringLiteral("无, 请在设备状态表勾选")
+                                                     : enabledDevices.join(QStringLiteral(" + "))));
 
     auto *mode = new QComboBox;
-    mode->addItem(QStringLiteral("采集指定时长"), 0);
-    mode->addItem(QStringLiteral("指定开始和结束时间"), 1);
+    mode->addItem(QStringLiteral("手动开始和暂停"), 0);
+    mode->addItem(QStringLiteral("采集指定时长"), 1);
+    mode->addItem(QStringLiteral("指定开始和结束时间"), 2);
+    mode->setCurrentIndex(settings.value(QStringLiteral("acquisition/mode"), 0).toInt());
     form->addRow(QStringLiteral("采集模式"), mode);
 
     auto *durationRow = new QWidget;
@@ -247,17 +247,19 @@ void MainWindow::showAcquisitionDialog()
     durationLayout->setContentsMargins(0, 0, 0, 0);
     auto *duration = new QSpinBox;
     duration->setRange(1, 604800);
-    duration->setValue(60);
+    duration->setValue(settings.value(QStringLiteral("acquisition/duration"), 60).toInt());
     auto *durationUnit = new QComboBox;
     durationUnit->addItem(QStringLiteral("秒"), 1);
     durationUnit->addItem(QStringLiteral("分钟"), 60);
+    const int durationUnitIndex = durationUnit->findData(settings.value(QStringLiteral("acquisition/durationMultiplier"), 1).toInt());
+    durationUnit->setCurrentIndex(durationUnitIndex >= 0 ? durationUnitIndex : 0);
     durationLayout->addWidget(duration, 1);
     durationLayout->addWidget(durationUnit);
     form->addRow(QStringLiteral("采集时长"), durationRow);
 
     const QDateTime now = QDateTime::currentDateTime();
-    auto *startTime = new QDateTimeEdit(now, &dialog);
-    auto *endTime = new QDateTimeEdit(now.addSecs(60), &dialog);
+    auto *startTime = new QDateTimeEdit(settings.value(QStringLiteral("acquisition/startTime"), now).toDateTime(), &dialog);
+    auto *endTime = new QDateTimeEdit(settings.value(QStringLiteral("acquisition/endTime"), now.addSecs(60)).toDateTime(), &dialog);
     for (auto *editor : {startTime, endTime}) {
         editor->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
         editor->setCalendarPopup(true);
@@ -280,8 +282,9 @@ void MainWindow::showAcquisitionDialog()
     form->addRow(QStringLiteral("保存文件"), filePath);
 
     auto updateModeRows = [mode, durationRow, startRow, endRow](int index) {
-        const bool absolute = index == 1;
-        durationRow->setVisible(!absolute);
+        const bool duration = index == 1;
+        const bool absolute = index == 2;
+        durationRow->setVisible(duration);
         startRow->setVisible(absolute);
         endRow->setVisible(absolute);
     };
@@ -289,18 +292,14 @@ void MainWindow::showAcquisitionDialog()
     updateModeRows(mode->currentIndex());
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
-    auto *startButton = buttons->addButton(QStringLiteral("开始采集"), QDialogButtonBox::AcceptRole);
+    auto *saveButton = buttons->addButton(QStringLiteral("保存设置"), QDialogButtonBox::AcceptRole);
     auto *layout = new QVBoxLayout(&dialog);
     layout->addLayout(form);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    connect(startButton, &QPushButton::clicked, &dialog, [&dialog, bmp280, rs485, veml7700, mode, duration, durationUnit,
+    connect(saveButton, &QPushButton::clicked, &dialog, [&dialog, mode,
                                                             startTime, endTime, filePath] {
-        if (!bmp280->isChecked() && !rs485->isChecked() && !veml7700->isChecked()) {
-            QMessageBox::warning(&dialog, QStringLiteral("采集设备为空"), QStringLiteral("至少选择一个采集设备"));
-            return;
-        }
-        if (mode->currentIndex() == 1 && endTime->dateTime() <= startTime->dateTime()) {
+        if (mode->currentIndex() == 2 && endTime->dateTime() <= startTime->dateTime()) {
             QMessageBox::warning(&dialog, QStringLiteral("时间无效"), QStringLiteral("结束时间必须晚于开始时间"));
             return;
         }
@@ -312,18 +311,14 @@ void MainWindow::showAcquisitionDialog()
     });
 
     if (dialog.exec() != QDialog::Accepted) return;
-    int deviceMask = 0;
-    if (bmp280->isChecked()) deviceMask |= SensorBmp280;
-    if (rs485->isChecked()) deviceMask |= SensorRs485;
-    if (veml7700->isChecked()) deviceMask |= SensorVeml7700;
-    const QDateTime start = mode->currentIndex() == 0 ? QDateTime::currentDateTime() : startTime->dateTime();
-    const QDateTime end = mode->currentIndex() == 0
-        ? start.addSecs(duration->value() * durationUnit->currentData().toInt())
-        : endTime->dateTime();
+    settings.setValue(QStringLiteral("acquisition/mode"), mode->currentIndex());
+    settings.setValue(QStringLiteral("acquisition/duration"), duration->value());
+    settings.setValue(QStringLiteral("acquisition/durationMultiplier"), durationUnit->currentData().toInt());
+    settings.setValue(QStringLiteral("acquisition/startTime"), startTime->dateTime());
+    settings.setValue(QStringLiteral("acquisition/endTime"), endTime->dateTime());
     settings.setValue(QStringLiteral("acquisition/filePath"), filePath->text().trimmed());
-    settings.setValue(QStringLiteral("acquisition/deviceMask"), deviceMask);
     settings.sync();
-    startAcquisition(start, end, deviceMask, filePath->text().trimmed());
+    statusBar()->showMessage(QStringLiteral("采集时间设置已保存, 点击开始采集后生效"), 5000);
 }
 
 void MainWindow::startAcquisition(const QDateTime &startTime, const QDateTime &endTime,
@@ -337,11 +332,10 @@ void MainWindow::startAcquisition(const QDateTime &startTime, const QDateTime &e
     acquisitionFilePath_ = filePath;
     acquisitionActive_ = false;
     acquisitionScheduled_ = true;
-    acquisitionButton_->setText(QStringLiteral("停止采集"));
-    samplingButton_->setEnabled(false);
+    samplingButton_->setText(QStringLiteral("暂停采集"));
     samplingActive_ = false;
     provider_->stop();
-    acquisitionStatusLabel_->setText(QStringLiteral("等待开始"));
+    updateDeviceStatus(QStringLiteral("采集服务"), false, QStringLiteral("等待开始"));
     statusBar()->showMessage(QStringLiteral("等待采集任务开始: %1").arg(startTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))));
     scheduleAcquisitionTimer(startTime);
 }
@@ -377,16 +371,11 @@ void MainWindow::handleAcquisitionTimer()
         if (needsHeader) {
             QTextStream stream(&acquisitionFile_);
             stream.setCodec("UTF-8");
-            stream << "timestamp";
-            if (acquisitionDeviceMask_ & SensorBmp280) stream << ",bmp280_temperature,bmp280_pressure";
-            if (acquisitionDeviceMask_ & SensorRs485) stream << ",rs485_humidity";
-            if (acquisitionDeviceMask_ & SensorVeml7700) stream << ",veml7700_illuminance";
-            stream << '\n';
+            stream << "timestamp,bmp280_temperature,bmp280_pressure,rs485_humidity,veml7700_illuminance\n";
             stream.flush();
         }
         provider_->start();
         samplingActive_ = true;
-        acquisitionStatusLabel_->setText(QStringLiteral("采集中"));
         statusBar()->showMessage(QStringLiteral("正在采集, 保存到 %1").arg(acquisitionFilePath_));
         if (now >= acquisitionEndTime_) {
             stopAcquisition(QStringLiteral("采集任务已完成"));
@@ -407,15 +396,11 @@ void MainWindow::stopAcquisition(const QString &message)
     if (acquisitionFile_.isOpen()) acquisitionFile_.close();
     acquisitionActive_ = false;
     acquisitionScheduled_ = false;
-    acquisitionDeviceMask_ = SensorAll;
+    acquisitionDeviceMask_ = enabledDeviceMask_;
     provider_->stop();
-    provider_->setEnabledDevices(SensorAll);
-    acquisitionButton_->setText(QStringLiteral("采集任务"));
-    samplingButton_->setEnabled(true);
+    provider_->setEnabledDevices(enabledDeviceMask_);
     samplingButton_->setText(QStringLiteral("开始采集"));
     samplingActive_ = false;
-    acquisitionStatusLabel_->setText(message.contains(QStringLiteral("完成"))
-                                     ? QStringLiteral("已完成") : QStringLiteral("已停止"));
     statusBar()->showMessage(message, 5000);
 }
 
@@ -429,12 +414,10 @@ void MainWindow::recordSnapshot(const SensorSnapshot &snapshot)
         stream << ',';
         if (qIsFinite(value)) stream << QString::number(value, 'f', 3);
     };
-    if (acquisitionDeviceMask_ & SensorBmp280) {
-        writeValue(snapshot.temperature);
-        writeValue(snapshot.pressure);
-    }
-    if (acquisitionDeviceMask_ & SensorRs485) writeValue(snapshot.humidity);
-    if (acquisitionDeviceMask_ & SensorVeml7700) writeValue(snapshot.illuminance);
+    writeValue(snapshot.temperature);
+    writeValue(snapshot.pressure);
+    writeValue(snapshot.humidity);
+    writeValue(snapshot.illuminance);
     stream << '\n';
     stream.flush();
 }
@@ -555,7 +538,7 @@ void MainWindow::updateSnapshot(const SensorSnapshot &snapshot)
     chartView_->setSeries(temperatureSeries_, humiditySeries_, pressureSeries_, illuminanceSeries_);
 
     QStringList alerts;
-    const int monitoredDevices = acquisitionActive_ ? acquisitionDeviceMask_ : SensorAll;
+    const int monitoredDevices = enabledDeviceMask_;
     if ((monitoredDevices & SensorBmp280) && (!qIsFinite(snapshot.temperature) || snapshot.temperature < temperatureMinimum_ || snapshot.temperature > temperatureMaximum_))
         alerts << QStringLiteral("温度超限");
     if ((monitoredDevices & SensorRs485) && (!qIsFinite(snapshot.humidity) || snapshot.humidity < humidityMinimum_ || snapshot.humidity > humidityMaximum_))
@@ -578,6 +561,7 @@ void MainWindow::appendSeries(QVector<double> *series, double value)
 
 void MainWindow::updateDeviceStatus(const QString &device, bool connected, const QString &detail)
 {
+    const QSignalBlocker blocker(statusTable_);
     int row = -1;
     for (int i = 0; i < statusTable_->rowCount(); ++i) {
         if (statusTable_->item(i, 0)->text() == device) {
@@ -588,31 +572,100 @@ void MainWindow::updateDeviceStatus(const QString &device, bool connected, const
     if (row < 0) {
         row = statusTable_->rowCount();
         statusTable_->insertRow(row);
-        statusTable_->setItem(row, 0, new QTableWidgetItem(device));
+        auto *deviceItem = new QTableWidgetItem(device);
+        const int flag = sensorFlagForDevice(device);
+        if (flag != 0) {
+            deviceItem->setFlags(deviceItem->flags() | Qt::ItemIsUserCheckable);
+            deviceItem->setCheckState(enabledDeviceMask_ & flag ? Qt::Checked : Qt::Unchecked);
+        }
+        statusTable_->setItem(row, 0, deviceItem);
         statusTable_->setItem(row, 1, new QTableWidgetItem);
         statusTable_->setItem(row, 2, new QTableWidgetItem);
     }
     auto *state = statusTable_->item(row, 1);
-    state->setText(connected ? QStringLiteral("在线") : QStringLiteral("离线"));
-    state->setForeground(connected ? QColor(QStringLiteral("#168a5b"))
-                                   : QColor(QStringLiteral("#b54747")));
+    if (detail == QStringLiteral("已禁用")) {
+        state->setText(QStringLiteral("禁用"));
+        state->setForeground(QColor(QStringLiteral("#87939b")));
+    } else if (connected) {
+        state->setText(QStringLiteral("在线"));
+        state->setForeground(QColor(QStringLiteral("#168a5b")));
+    } else if (detail == QStringLiteral("等待采集") || detail == QStringLiteral("等待开始")) {
+        state->setText(QStringLiteral("待机"));
+        state->setForeground(QColor(QStringLiteral("#b7791f")));
+    } else {
+        state->setText(QStringLiteral("离线"));
+        state->setForeground(QColor(QStringLiteral("#b54747")));
+    }
     statusTable_->item(row, 2)->setText(detail);
+}
+
+void MainWindow::updateEnabledDevices(QTableWidgetItem *item)
+{
+    if (!item || item->column() != 0) return;
+    const int flag = sensorFlagForDevice(item->text());
+    if (flag == 0) return;
+
+    if (item->checkState() == Qt::Checked)
+        enabledDeviceMask_ |= flag;
+    else
+        enabledDeviceMask_ &= ~flag;
+    acquisitionDeviceMask_ = enabledDeviceMask_;
+    provider_->setEnabledDevices(enabledDeviceMask_);
+
+    QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("acquisition/deviceMask"), enabledDeviceMask_);
+    settings.sync();
+}
+
+void MainWindow::startConfiguredSampling()
+{
+    if (enabledDeviceMask_ == 0) {
+        QMessageBox::warning(this, QStringLiteral("没有使能设备"), QStringLiteral("请先在设备状态表勾选至少一个传感器"));
+        return;
+    }
+
+    QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
+    const int mode = settings.value(QStringLiteral("acquisition/mode"), 0).toInt();
+    const QString filePath = settings.value(QStringLiteral("acquisition/filePath"),
+                                             QStringLiteral("/tmp/environment_monitor/acquisition.csv")).toString();
+    if (mode == 1) {
+        const int duration = settings.value(QStringLiteral("acquisition/duration"), 60).toInt();
+        const int multiplier = settings.value(QStringLiteral("acquisition/durationMultiplier"), 1).toInt();
+        const QDateTime start = QDateTime::currentDateTime();
+        startAcquisition(start, start.addSecs(duration * multiplier), enabledDeviceMask_, filePath);
+        return;
+    }
+    if (mode == 2) {
+        const QDateTime start = settings.value(QStringLiteral("acquisition/startTime")).toDateTime();
+        const QDateTime end = settings.value(QStringLiteral("acquisition/endTime")).toDateTime();
+        if (!start.isValid() || !end.isValid() || end <= start || end <= QDateTime::currentDateTime()) {
+            QMessageBox::warning(this, QStringLiteral("采集时间无效"), QStringLiteral("请重新设置有效的开始和结束时间"));
+            return;
+        }
+        startAcquisition(start, end, enabledDeviceMask_, filePath);
+        return;
+    }
+
+    provider_->setEnabledDevices(enabledDeviceMask_);
+    provider_->start();
+    samplingActive_ = true;
+    samplingButton_->setText(QStringLiteral("暂停采集"));
+    statusBar()->showMessage(QStringLiteral("采集中"));
 }
 
 void MainWindow::toggleSampling()
 {
-    if (samplingActive_) {
-        if (acquisitionActive_ || acquisitionScheduled_)
+    if (samplingActive_ || acquisitionScheduled_) {
+        if (acquisitionActive_ || acquisitionScheduled_) {
             stopAcquisition(QStringLiteral("采集任务已停止"));
-        provider_->stop();
-        samplingActive_ = false;
-        samplingButton_->setText(QStringLiteral("开始采集"));
-        statusBar()->showMessage(QStringLiteral("采集已暂停"));
+        } else {
+            provider_->stop();
+            samplingActive_ = false;
+            samplingButton_->setText(QStringLiteral("开始采集"));
+            statusBar()->showMessage(QStringLiteral("采集已暂停"));
+        }
     } else {
-        provider_->start();
-        samplingActive_ = true;
-        samplingButton_->setText(QStringLiteral("暂停采集"));
-        statusBar()->showMessage(QStringLiteral("模拟采集模式"));
+        startConfiguredSampling();
     }
 }
 

@@ -16,16 +16,13 @@ void SimulatedSensorProvider::start()
         return;
 
     sampleIndex_ = 0;
-    emit deviceStatusChanged(QStringLiteral("BMP280 / I2C"), true,
-                             QStringLiteral("模拟数据"));
-    emit deviceStatusChanged(QStringLiteral("RS485 温湿度计"), true,
-                             QStringLiteral("模拟数据"));
-    emit deviceStatusChanged(QStringLiteral("VEML7700 / I2C"), true,
-                             QStringLiteral("模拟数据"));
+    timer_->start();
+    emit deviceStatusChanged(QStringLiteral("采集服务"), true,
+                             QStringLiteral("采集中"));
+    updateDeviceStatuses();
     emit deviceStatusChanged(QStringLiteral("串口 WiFi"), false,
                              QStringLiteral("等待 ESP8266 配置"));
     sample();
-    timer_->start();
 }
 
 void SimulatedSensorProvider::stop()
@@ -33,6 +30,7 @@ void SimulatedSensorProvider::stop()
     timer_->stop();
     emit deviceStatusChanged(QStringLiteral("采集服务"), false,
                              QStringLiteral("已暂停"));
+    updateDeviceStatuses();
 }
 
 void SimulatedSensorProvider::setSamplingInterval(int intervalMs)
@@ -43,6 +41,21 @@ void SimulatedSensorProvider::setSamplingInterval(int intervalMs)
 void SimulatedSensorProvider::setEnabledDevices(int deviceMask)
 {
     enabledDevices_ = deviceMask & SensorAll;
+    updateDeviceStatuses();
+}
+
+void SimulatedSensorProvider::updateDeviceStatuses()
+{
+    const bool collecting = timer_->isActive();
+    const auto update = [this, collecting](const QString &device, int flag) {
+        const bool enabled = enabledDevices_ & flag;
+        emit deviceStatusChanged(device, enabled && collecting,
+                                 enabled ? (collecting ? QStringLiteral("模拟采集") : QStringLiteral("等待采集"))
+                                         : QStringLiteral("已禁用"));
+    };
+    update(QStringLiteral("BMP280 / I2C"), SensorBmp280);
+    update(QStringLiteral("RS485 温湿度计"), SensorRs485);
+    update(QStringLiteral("VEML7700 / I2C"), SensorVeml7700);
 }
 
 void SimulatedSensorProvider::sample()
