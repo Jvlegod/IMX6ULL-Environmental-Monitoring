@@ -3,6 +3,7 @@
 
 #include "esp8266controller.h"
 #include <QDialog>
+#include <QEvent>
 
 class QComboBox;
 class QLabel;
@@ -10,12 +11,18 @@ class QLineEdit;
 class QPushButton;
 class QProgressBar;
 class QTableWidget;
+class QWidget;
+class QKeyEvent;
 
 class WifiDialog final : public QDialog
 {
     Q_OBJECT
 public:
     explicit WifiDialog(QWidget *parent = nullptr);
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 signals:
     void wifiStateChanged(bool connected, const QString &detail);
@@ -33,6 +40,8 @@ private slots:
 
 private:
     void setBusy(bool busy);
+    void showKeyboard(QLineEdit *edit);
+    void hideKeyboard();
 
     Esp8266Controller controller_;
     QComboBox *portCombo_;
@@ -47,6 +56,8 @@ private:
     QProgressBar *otaProgress_;
     QTableWidget *networkTable_;
     QLabel *statusLabel_;
+    QWidget *keyboardPanel_;
+    QLineEdit *keyboardEdit_;
 };
 
 #endif

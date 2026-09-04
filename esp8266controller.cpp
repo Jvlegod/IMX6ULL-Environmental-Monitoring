@@ -247,6 +247,11 @@ void Esp8266Controller::processLine(const QByteArray &line)
         }
         return;
     }
+    if (text == QStringLiteral("ERROR") && operation_ == WaitingForScanMode) {
+        operation_ = Scanning;
+        sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000);
+        return;
+    }
     if (text == QStringLiteral("ERROR") || text == QStringLiteral("FAIL") || text.startsWith(QStringLiteral("+CWJAP:"))) { finishWithError(QStringLiteral("ESP8266 返回: %1").arg(text)); return; }
     if (operation_ == WaitingForScanMode && text == QStringLiteral("OK")) { operation_ = Scanning; sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000); }
     else if (operation_ == Scanning && text == QStringLiteral("OK")) { timeoutTimer_->stop(); std::sort(networks_.begin(), networks_.end(), [](const WifiNetwork &a, const WifiNetwork &b) { return a.rssi > b.rssi; }); operation_ = Idle; emit scanFinished(networks_); }

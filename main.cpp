@@ -2,10 +2,37 @@
 
 #include <QApplication>
 #include <QMetaType>
+#include <QAbstractButton>
+#include <QElapsedTimer>
+#include <QEvent>
+#include <QMouseEvent>
+#include <QObject>
+
+class TouchDebounceFilter final : public QObject
+{
+public:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() != QEvent::MouseButtonRelease || !qobject_cast<QAbstractButton *>(watched))
+            return QObject::eventFilter(watched, event);
+        const qint64 now = timer_.isValid() ? timer_.elapsed() : 1000;
+        timer_.start();
+        if (now < 300) {
+            event->accept();
+            return true;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QElapsedTimer timer_;
+};
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    TouchDebounceFilter touchDebounce;
+    app.installEventFilter(&touchDebounce);
     qRegisterMetaType<SensorSnapshot>("SensorSnapshot");
     app.setApplicationName(QStringLiteral("environment_monitor"));
     app.setApplicationVersion(QStringLiteral("0.1.0"));
