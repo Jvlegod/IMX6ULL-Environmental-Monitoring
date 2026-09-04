@@ -4,7 +4,6 @@
 #include "trendchart.h"
 #include "wifidialog.h"
 #include <QApplication>
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -219,19 +218,7 @@ void MainWindow::showAcquisitionDialog()
     dialog.resize(qMin(560, screen.width() - 20), qMin(460, screen.height() - 20));
 
     auto *form = new QFormLayout;
-    auto *devices = new QWidget;
-    auto *deviceLayout = new QHBoxLayout(devices);
-    deviceLayout->setContentsMargins(0, 0, 0, 0);
-    auto *bmp280 = new QCheckBox(QStringLiteral("BMP280"));
-    auto *rs485 = new QCheckBox(QStringLiteral("RS485 温湿度计"));
-    auto *veml7700 = new QCheckBox(QStringLiteral("VEML7700"));
-    bmp280->setChecked(true);
-    rs485->setChecked(true);
-    veml7700->setChecked(true);
-    deviceLayout->addWidget(bmp280);
-    deviceLayout->addWidget(rs485);
-    deviceLayout->addWidget(veml7700);
-    form->addRow(QStringLiteral("采集设备"), devices);
+    form->addRow(QStringLiteral("采集设备"), new QLabel(QStringLiteral("BMP280 + RS485 温湿度计 + VEML7700")));
 
     auto *mode = new QComboBox;
     mode->addItem(QStringLiteral("采集指定时长"), 0);
@@ -291,12 +278,8 @@ void MainWindow::showAcquisitionDialog()
     layout->addLayout(form);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    connect(startButton, &QPushButton::clicked, &dialog, [&dialog, bmp280, rs485, veml7700, mode,
-                                                            duration, durationUnit, startTime, endTime, filePath] {
-        if (!bmp280->isChecked() && !rs485->isChecked() && !veml7700->isChecked()) {
-            QMessageBox::warning(&dialog, QStringLiteral("采集设备为空"), QStringLiteral("至少选择一个采集设备"));
-            return;
-        }
+    connect(startButton, &QPushButton::clicked, &dialog, [&dialog, mode, duration, durationUnit,
+                                                            startTime, endTime, filePath] {
         if (mode->currentIndex() == 1 && endTime->dateTime() <= startTime->dateTime()) {
             QMessageBox::warning(&dialog, QStringLiteral("时间无效"), QStringLiteral("结束时间必须晚于开始时间"));
             return;
@@ -309,17 +292,13 @@ void MainWindow::showAcquisitionDialog()
     });
 
     if (dialog.exec() != QDialog::Accepted) return;
-    int deviceMask = 0;
-    if (bmp280->isChecked()) deviceMask |= SensorBmp280;
-    if (rs485->isChecked()) deviceMask |= SensorRs485;
-    if (veml7700->isChecked()) deviceMask |= SensorVeml7700;
     const QDateTime start = mode->currentIndex() == 0 ? QDateTime::currentDateTime() : startTime->dateTime();
     const QDateTime end = mode->currentIndex() == 0
         ? start.addSecs(duration->value() * durationUnit->currentData().toInt())
         : endTime->dateTime();
     settings.setValue(QStringLiteral("acquisition/filePath"), filePath->text().trimmed());
     settings.sync();
-    startAcquisition(start, end, deviceMask, filePath->text().trimmed());
+    startAcquisition(start, end, SensorAll, filePath->text().trimmed());
 }
 
 void MainWindow::startAcquisition(const QDateTime &startTime, const QDateTime &endTime,
@@ -372,9 +351,7 @@ void MainWindow::handleAcquisitionTimer()
             QTextStream stream(&acquisitionFile_);
             stream.setCodec("UTF-8");
             stream << "timestamp";
-            if (acquisitionDeviceMask_ & SensorBmp280) stream << ",bmp280_temperature,bmp280_pressure";
-            if (acquisitionDeviceMask_ & SensorRs485) stream << ",rs485_humidity";
-            if (acquisitionDeviceMask_ & SensorVeml7700) stream << ",veml7700_illuminance";
+            stream << ",bmp280_temperature,bmp280_pressure,rs485_humidity,veml7700_illuminance";
             stream << '\n';
             stream.flush();
         }
@@ -418,12 +395,10 @@ void MainWindow::recordSnapshot(const SensorSnapshot &snapshot)
         stream << ',';
         if (qIsFinite(value)) stream << QString::number(value, 'f', 3);
     };
-    if (acquisitionDeviceMask_ & SensorBmp280) {
-        writeValue(snapshot.temperature);
-        writeValue(snapshot.pressure);
-    }
-    if (acquisitionDeviceMask_ & SensorRs485) writeValue(snapshot.humidity);
-    if (acquisitionDeviceMask_ & SensorVeml7700) writeValue(snapshot.illuminance);
+    writeValue(snapshot.temperature);
+    writeValue(snapshot.pressure);
+    writeValue(snapshot.humidity);
+    writeValue(snapshot.illuminance);
     stream << '\n';
     stream.flush();
 }
@@ -544,7 +519,7 @@ void MainWindow::updateSnapshot(const SensorSnapshot &snapshot)
     chartView_->setSeries(temperatureSeries_, humiditySeries_, pressureSeries_, illuminanceSeries_);
 
     QStringList alerts;
-    const int monitoredDevices = acquisitionActive_ ? acquisitionDeviceMask_ : SensorAll;
+    const int monitoredDevices = SensorAll;
     if ((monitoredDevices & SensorBmp280) && (!qIsFinite(snapshot.temperature) || snapshot.temperature < temperatureMinimum_ || snapshot.temperature > temperatureMaximum_))
         alerts << QStringLiteral("温度超限");
     if ((monitoredDevices & SensorRs485) && (!qIsFinite(snapshot.humidity) || snapshot.humidity < humidityMinimum_ || snapshot.humidity > humidityMaximum_))

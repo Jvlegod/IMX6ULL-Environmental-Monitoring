@@ -57,19 +57,19 @@ On the embedded board, settings use a stable path that is not replaced by applic
 
 Desktop builds use the standard writable application configuration directory. The first run of the new path migrates the previous `~/.config/jvle/environment_monitor.conf` when it exists.
 
-## Independent acquisition tasks
+## Acquisition tasks
 
-The `采集任务` control supports selecting BMP280, RS485 temperature/humidity and VEML7700 independently. A task can run for a specified duration or between an absolute start and end time. Samples from selected devices are appended to a CSV file; unselected device fields are not written as measurements.
+The `采集任务` control starts BMP280, RS485 temperature/humidity and VEML7700 together. A task can run for a specified duration or between an absolute start and end time. The task starts the provider at the configured start time, stops it at the configured end time, and appends all sensor fields to a CSV file.
 
-The current simulated provider implements this selection through `ISensorProvider::setEnabledDevices`. A hardware provider should use the same mask to read only the requested sub-devices and emit a `SensorSnapshot`. The current task output is CSV rather than SQLite.
+The current simulated provider receives `SensorAll` when a task starts. A hardware provider should read all requested sub-devices in one sampling cycle and emit a complete `SensorSnapshot`. The current task output is CSV rather than SQLite.
 
-The CSV contains an ISO timestamp and columns for the selected devices, for example:
+The CSV contains an ISO timestamp and all sensor columns:
 
 ```text
 timestamp,bmp280_temperature,bmp280_pressure,rs485_humidity
 ```
 
-When a task starts, the provider uses the selected device mask. When it finishes or is stopped, the provider returns to all devices. Abnormal-data reporting remains on-screen only; audio reporting is reserved for a later version.
+When a task starts, the provider uses the all-device mask. When it finishes or is stopped, the provider returns to the normal sampling state. Abnormal-data reporting remains on-screen only; audio reporting is reserved for a later version.
 
 ## ESP8266 WiFi setup
 
