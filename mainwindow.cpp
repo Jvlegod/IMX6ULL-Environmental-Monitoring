@@ -334,6 +334,8 @@ void MainWindow::startAcquisition(const QDateTime &startTime, const QDateTime &e
     acquisitionActive_ = false;
     acquisitionScheduled_ = true;
     acquisitionButton_->setText(QStringLiteral("停止采集"));
+    samplingButton_->setEnabled(false);
+    provider_->stop();
     statusBar()->showMessage(QStringLiteral("等待采集任务开始: %1").arg(startTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))));
     scheduleAcquisitionTimer(startTime);
 }
@@ -376,6 +378,7 @@ void MainWindow::handleAcquisitionTimer()
             stream << '\n';
             stream.flush();
         }
+        provider_->start();
         statusBar()->showMessage(QStringLiteral("正在采集, 保存到 %1").arg(acquisitionFilePath_));
         if (now >= acquisitionEndTime_) {
             stopAcquisition(QStringLiteral("采集任务已完成"));
@@ -397,8 +400,11 @@ void MainWindow::stopAcquisition(const QString &message)
     acquisitionActive_ = false;
     acquisitionScheduled_ = false;
     acquisitionDeviceMask_ = SensorAll;
+    provider_->stop();
     provider_->setEnabledDevices(SensorAll);
     acquisitionButton_->setText(QStringLiteral("采集任务"));
+    samplingButton_->setEnabled(true);
+    samplingButton_->setText(QStringLiteral("开始采集"));
     statusBar()->showMessage(message, 5000);
 }
 
