@@ -26,6 +26,7 @@ public:
 public slots:
     virtual void start() = 0;
     virtual void stop() = 0;
+    virtual void setSamplingInterval(int intervalMs) = 0;
 
 signals:
     void snapshotReady(const SensorSnapshot &snapshot);
@@ -43,6 +44,7 @@ public:
 public slots:
     void start() override;
     void stop() override;
+    void setSamplingInterval(int intervalMs) override;
 
 private slots:
     void sample();

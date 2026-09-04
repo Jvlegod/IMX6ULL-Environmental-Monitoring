@@ -12,7 +12,7 @@ cmake --build build
 ./build/environment_monitor
 ```
 
-The first version displays temperature, humidity, pressure, illuminance, trend lines, threshold alerts and connection states for BMP280, RS485, VEML7700 and serial WiFi.
+The current version displays temperature, humidity, pressure, illuminance, trend lines, configurable sampling intervals, configurable threshold alerts and connection states for BMP280, RS485, VEML7700 and serial WiFi. Abnormal-data reporting currently appears on screen; audio reporting is reserved for a later version.
 
 ## IMX6ULL deployment
 
@@ -43,6 +43,18 @@ export QT_QPA_PLATFORM=linuxfb
 - VEML7700: add an I2C reader after its bus address and kernel access path are confirmed.
 - Serial WiFi: use the built-in ESP8266 configuration dialog to open the UART, scan nearby APs and join a network.
 
+## Sampling and threshold configuration
+
+The dashboard provides sampling intervals of 1, 5, 10, 30 and 60 seconds. The selected interval is applied to the provider timer and persisted with `QSettings`.
+
+The threshold dialog supports minimum and maximum values for temperature, humidity, pressure and illuminance. A snapshot is marked abnormal when a value is outside its configured range or is not finite. The current reporting action is the on-screen alert banner only.
+
+The settings are stored for the current target user under:
+
+```text
+~/.config/jvle/environment_monitor.conf
+```
+
 ## ESP8266 WiFi setup
 
 Connect the ATK-MW8266D UART TX to the IMX6ULL UART RX, UART RX to UART TX, and share GND. The module accepts a 3.3 V to 5 V supply, while its UART uses 3.3 V LVTTL levels.
@@ -52,7 +64,7 @@ Connect the ATK-MW8266D UART TX to the IMX6ULL UART RX, UART RX to UART TX, and 
 3. Double-click the target SSID, enter its password and connect. Use `重新扫描 WiFi` when another scan is needed.
 4. If the module does not answer `AT`, verify the crossed TX/RX wiring, common ground, power capacity, UART device permissions and firmware baud rate.
 
-The controller follows the supplied `ESP8266_AT指令集V2.1.0.pdf`: `AT`, `AT+CWMODE_CUR=1`, `AT+CWLAP`, `AT+CWJAP_CUR` and `AT+CIFSR`. The `_CUR` commands avoid writing temporary settings to flash.
+The controller follows the supplied `ESP8266_AT指令集V2.1.0.pdf`: `AT`, `AT+CWMODE_CUR=1`, `AT+CWLAP`, `AT+CWJAP` and `AT+CIFSR`.
 
 References:
 

@@ -3,12 +3,20 @@
 #include "trendchart.h"
 #include "wifidialog.h"
 #include <QApplication>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
+#include <QSettings>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
+#include <QtMath>
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QFrame>
@@ -21,10 +29,15 @@ const int kMaxPoints = 60;
 
 MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     : QMainWindow(parent), provider_(provider), samplingButton_(nullptr),
+      thresholdButton_(nullptr), samplingIntervalCombo_(nullptr),
       lastUpdateLabel_(nullptr), alertLabel_(nullptr), temperatureValue_(nullptr),
       temperatureUnit_(nullptr), humidityValue_(nullptr), humidityUnit_(nullptr),
       pressureValue_(nullptr), pressureUnit_(nullptr), illuminanceValue_(nullptr),
-      illuminanceUnit_(nullptr), statusTable_(nullptr), chartView_(nullptr), wifiDialog_(nullptr)
+      illuminanceUnit_(nullptr), statusTable_(nullptr), chartView_(nullptr), wifiDialog_(nullptr),
+      temperatureMinimum_(10.0), temperatureMaximum_(35.0),
+      humidityMinimum_(20.0), humidityMaximum_(80.0),
+      pressureMinimum_(95.0), pressureMaximum_(106.0),
+      illuminanceMinimum_(0.0), illuminanceMaximum_(2000.0)
 {
     setWindowTitle(QStringLiteral("IMX6ULL 环境监测系统"));
     resize(1100, 720);
@@ -58,6 +71,21 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     connect(wifiButton, &QPushButton::clicked, this, &MainWindow::showWifiDialog);
     header->addWidget(wifiButton);
     root->addLayout(header);
+
+    auto *samplingControls = new QHBoxLayout;
+    samplingControls->addWidget(new QLabel(QStringLiteral("采集周期")));
+    samplingIntervalCombo_ = new QComboBox;
+    samplingIntervalCombo_->addItem(QStringLiteral("1 秒"), 1);
+    samplingIntervalCombo_->addItem(QStringLiteral("5 秒"), 5);
+    samplingIntervalCombo_->addItem(QStringLiteral("10 秒"), 10);
+    samplingIntervalCombo_->addItem(QStringLiteral("30 秒"), 30);
+    samplingIntervalCombo_->addItem(QStringLiteral("1 分钟"), 60);
+    samplingControls->addWidget(samplingIntervalCombo_);
+    thresholdButton_ = new QPushButton(QStringLiteral("阈值设置"));
+    samplingControls->addWidget(thresholdButton_);
+    samplingControls->addStretch();
+    root->addLayout(samplingControls);
+    loadSettings();
 
     auto *metrics = new QGridLayout;
     metrics->setSpacing(12);
@@ -114,6 +142,110 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     connect(provider_, &ISensorProvider::deviceStatusChanged, this, &MainWindow::updateDeviceStatus);
     connect(provider_, &ISensorProvider::providerError, this,
             [this](const QString &message) { setAlert(message, true); });
+    connect(samplingIntervalCombo_, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::updateSamplingInterval);
+    connect(thresholdButton_, &QPushButton::clicked, this, &MainWindow::showThresholdDialog);
+    updateSamplingInterval(samplingIntervalCombo_->currentIndex());
+}
+
+void MainWindow::loadSettings()
+{
+    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    const int intervalSeconds = settings.value(QStringLiteral("sampling/intervalSeconds"), 10).toInt();
+    const int intervalIndex = samplingIntervalCombo_->findData(intervalSeconds);
+    samplingIntervalCombo_->setCurrentIndex(intervalIndex >= 0 ? intervalIndex : 2);
+    temperatureMinimum_ = settings.value(QStringLiteral("thresholds/temperatureMinimum"), temperatureMinimum_).toDouble();
+    temperatureMaximum_ = settings.value(QStringLiteral("thresholds/temperatureMaximum"), temperatureMaximum_).toDouble();
+    humidityMinimum_ = settings.value(QStringLiteral("thresholds/humidityMinimum"), humidityMinimum_).toDouble();
+    humidityMaximum_ = settings.value(QStringLiteral("thresholds/humidityMaximum"), humidityMaximum_).toDouble();
+    pressureMinimum_ = settings.value(QStringLiteral("thresholds/pressureMinimum"), pressureMinimum_).toDouble();
+    pressureMaximum_ = settings.value(QStringLiteral("thresholds/pressureMaximum"), pressureMaximum_).toDouble();
+    illuminanceMinimum_ = settings.value(QStringLiteral("thresholds/illuminanceMinimum"), illuminanceMinimum_).toDouble();
+    illuminanceMaximum_ = settings.value(QStringLiteral("thresholds/illuminanceMaximum"), illuminanceMaximum_).toDouble();
+}
+
+void MainWindow::saveThresholds()
+{
+    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    settings.setValue(QStringLiteral("thresholds/temperatureMinimum"), temperatureMinimum_);
+    settings.setValue(QStringLiteral("thresholds/temperatureMaximum"), temperatureMaximum_);
+    settings.setValue(QStringLiteral("thresholds/humidityMinimum"), humidityMinimum_);
+    settings.setValue(QStringLiteral("thresholds/humidityMaximum"), humidityMaximum_);
+    settings.setValue(QStringLiteral("thresholds/pressureMinimum"), pressureMinimum_);
+    settings.setValue(QStringLiteral("thresholds/pressureMaximum"), pressureMaximum_);
+    settings.setValue(QStringLiteral("thresholds/illuminanceMinimum"), illuminanceMinimum_);
+    settings.setValue(QStringLiteral("thresholds/illuminanceMaximum"), illuminanceMaximum_);
+    settings.sync();
+}
+
+void MainWindow::updateSamplingInterval(int index)
+{
+    if (index < 0) return;
+    const int intervalSeconds = samplingIntervalCombo_->itemData(index).toInt();
+    provider_->setSamplingInterval(intervalSeconds * 1000);
+    QSettings settings(QStringLiteral("jvle"), QStringLiteral("environment_monitor"));
+    settings.setValue(QStringLiteral("sampling/intervalSeconds"), intervalSeconds);
+    settings.sync();
+}
+
+void MainWindow::showThresholdDialog()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("传感器异常阈值"));
+    dialog.setModal(true);
+    dialog.resize(qMin(520, width() - 24), 420);
+
+    auto *form = new QFormLayout;
+    auto addLimit = [form](const QString &label, double minimum, double maximum,
+                           double lower, double upper, int decimals, double step) {
+        auto *minimumBox = new QDoubleSpinBox;
+        minimumBox->setRange(lower, upper);
+        minimumBox->setDecimals(decimals);
+        minimumBox->setSingleStep(step);
+        minimumBox->setValue(minimum);
+        auto *maximumBox = new QDoubleSpinBox;
+        maximumBox->setRange(lower, upper);
+        maximumBox->setDecimals(decimals);
+        maximumBox->setSingleStep(step);
+        maximumBox->setValue(maximum);
+        auto *row = new QHBoxLayout;
+        row->addWidget(new QLabel(QStringLiteral("下限")));
+        row->addWidget(minimumBox, 1);
+        row->addWidget(new QLabel(QStringLiteral("上限")));
+        row->addWidget(maximumBox, 1);
+        form->addRow(new QLabel(label), row);
+        return qMakePair(minimumBox, maximumBox);
+    };
+
+    const auto temperature = addLimit(QStringLiteral("温度"), temperatureMinimum_, temperatureMaximum_, -100.0, 100.0, 1, 0.1);
+    const auto humidity = addLimit(QStringLiteral("湿度"), humidityMinimum_, humidityMaximum_, 0.0, 100.0, 1, 0.1);
+    const auto pressure = addLimit(QStringLiteral("气压"), pressureMinimum_, pressureMaximum_, 0.0, 200.0, 2, 0.1);
+    const auto illuminance = addLimit(QStringLiteral("光照"), illuminanceMinimum_, illuminanceMaximum_, 0.0, 100000.0, 0, 10.0);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->addLayout(form);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QList<QPair<QDoubleSpinBox *, QDoubleSpinBox *>> limits{temperature, humidity, pressure, illuminance};
+    for (const auto &limit : limits) {
+        if (limit.first->value() > limit.second->value()) {
+            QMessageBox::warning(this, QStringLiteral("阈值无效"), QStringLiteral("每个参数的下限不能大于上限"));
+            return;
+        }
+    }
+    temperatureMinimum_ = temperature.first->value();
+    temperatureMaximum_ = temperature.second->value();
+    humidityMinimum_ = humidity.first->value();
+    humidityMaximum_ = humidity.second->value();
+    pressureMinimum_ = pressure.first->value();
+    pressureMaximum_ = pressure.second->value();
+    illuminanceMinimum_ = illuminance.first->value();
+    illuminanceMaximum_ = illuminance.second->value();
+    saveThresholds();
+    statusBar()->showMessage(QStringLiteral("异常阈值已更新"), 3000);
 }
 
 void MainWindow::showWifiDialog()
@@ -169,12 +301,14 @@ void MainWindow::updateSnapshot(const SensorSnapshot &snapshot)
     chartView_->setSeries(temperatureSeries_, humiditySeries_, pressureSeries_, illuminanceSeries_);
 
     QStringList alerts;
-    if (snapshot.temperature < 10.0 || snapshot.temperature > 35.0)
+    if (!qIsFinite(snapshot.temperature) || snapshot.temperature < temperatureMinimum_ || snapshot.temperature > temperatureMaximum_)
         alerts << QStringLiteral("温度超限");
-    if (snapshot.humidity < 20.0 || snapshot.humidity > 80.0)
+    if (!qIsFinite(snapshot.humidity) || snapshot.humidity < humidityMinimum_ || snapshot.humidity > humidityMaximum_)
         alerts << QStringLiteral("湿度超限");
-    if (snapshot.pressure < 95.0 || snapshot.pressure > 106.0)
+    if (!qIsFinite(snapshot.pressure) || snapshot.pressure < pressureMinimum_ || snapshot.pressure > pressureMaximum_)
         alerts << QStringLiteral("气压超限");
+    if (!qIsFinite(snapshot.illuminance) || snapshot.illuminance < illuminanceMinimum_ || snapshot.illuminance > illuminanceMaximum_)
+        alerts << QStringLiteral("光照超限");
     setAlert(alerts.isEmpty() ? QStringLiteral("状态正常 · 当前未发现超限数据")
                              : QStringLiteral("告警: ") + alerts.join(QStringLiteral(" / ")), !alerts.isEmpty());
 }

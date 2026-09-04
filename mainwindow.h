@@ -7,6 +7,7 @@
 
 QT_BEGIN_NAMESPACE
 class QLabel;
+class QComboBox;
 class QPushButton;
 class QTableWidget;
 QT_END_NAMESPACE
@@ -23,13 +24,19 @@ private slots:
     void updateDeviceStatus(const QString &device, bool connected, const QString &detail);
     void toggleSampling();
     void showWifiDialog();
+    void showThresholdDialog();
+    void updateSamplingInterval(int index);
 private:
     QWidget *makeMetricCard(const QString &title, const QString &accent,
                             QLabel **valueLabel, QLabel **unitLabel);
     void setAlert(const QString &message, bool active);
     void appendSeries(QVector<double> *series, double value);
+    void loadSettings();
+    void saveThresholds();
     ISensorProvider *provider_;
     QPushButton *samplingButton_;
+    QPushButton *thresholdButton_;
+    QComboBox *samplingIntervalCombo_;
     QLabel *lastUpdateLabel_;
     QLabel *alertLabel_;
     QLabel *temperatureValue_;
@@ -47,6 +54,14 @@ private:
     QVector<double> humiditySeries_;
     QVector<double> pressureSeries_;
     QVector<double> illuminanceSeries_;
+    double temperatureMinimum_;
+    double temperatureMaximum_;
+    double humidityMinimum_;
+    double humidityMaximum_;
+    double pressureMinimum_;
+    double pressureMaximum_;
+    double illuminanceMinimum_;
+    double illuminanceMaximum_;
 };
 
 #endif

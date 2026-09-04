@@ -35,6 +35,11 @@ void SimulatedSensorProvider::stop()
                              QStringLiteral("已暂停"));
 }
 
+void SimulatedSensorProvider::setSamplingInterval(int intervalMs)
+{
+    timer_->setInterval(qMax(1000, intervalMs));
+}
+
 void SimulatedSensorProvider::sample()
 {
     const double t = sampleIndex_++ / 10.0;
