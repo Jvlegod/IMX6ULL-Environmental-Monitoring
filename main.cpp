@@ -17,6 +17,9 @@ public:
     {
         if (event->type() != QEvent::MouseButtonRelease || !qobject_cast<QAbstractButton *>(watched))
             return QObject::eventFilter(watched, event);
+        if (qobject_cast<QAbstractButton *>(watched)->property("touchDebounce").isValid()
+            && !qobject_cast<QAbstractButton *>(watched)->property("touchDebounce").toBool())
+            return QObject::eventFilter(watched, event);
         if (!timer_.isValid()) timer_.start();
         const qint64 now = timer_.elapsed();
         auto *button = qobject_cast<QAbstractButton *>(watched);

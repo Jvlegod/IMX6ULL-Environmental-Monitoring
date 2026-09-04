@@ -116,6 +116,7 @@ WifiDialog::WifiDialog(QWidget *parent)
     auto *keyboardLayout = new QGridLayout(keyboardPanel_);
     auto *keyboardTitle = new QLabel(QStringLiteral("触摸键盘"));
     auto *collapseKeyboard = new QPushButton(QStringLiteral("收起键盘"));
+    collapseKeyboard->setProperty("touchDebounce", false);
     connect(collapseKeyboard, &QPushButton::clicked, this, &WifiDialog::hideKeyboard);
     keyboardLayout->addWidget(keyboardTitle, 0, 0, 1, 8);
     keyboardLayout->addWidget(collapseKeyboard, 0, 8, 1, 2);
@@ -125,7 +126,8 @@ WifiDialog::WifiDialog(QWidget *parent)
                               QStringLiteral("z"), QStringLiteral("x"), QStringLiteral("c"), QStringLiteral("v"), QStringLiteral("b"), QStringLiteral("n"), QStringLiteral("m"), QStringLiteral("."), QStringLiteral("_"), QStringLiteral("-")};
     for (int i = 0; i < keys.size(); ++i) {
         auto *key = new QPushButton(keys.at(i));
-        key->setMinimumHeight(21);
+        key->setMinimumHeight(28);
+        key->setProperty("touchDebounce", false);
         connect(key, &QPushButton::clicked, this, [this, key] {
             if (keyboardEdit_) keyboardEdit_->insert(key->text());
         });
@@ -135,6 +137,10 @@ WifiDialog::WifiDialog(QWidget *parent)
     auto *space = new QPushButton(QStringLiteral("空格"));
     auto *clear = new QPushButton(QStringLiteral("清空"));
     auto *done = new QPushButton(QStringLiteral("完成"));
+    for (auto *button : {backspace, space, clear, done}) {
+        button->setMinimumHeight(28);
+        button->setProperty("touchDebounce", false);
+    }
     connect(backspace, &QPushButton::clicked, this, [this] {
         if (keyboardEdit_) keyboardEdit_->backspace();
     });
@@ -149,7 +155,7 @@ WifiDialog::WifiDialog(QWidget *parent)
     keyboardLayout->addWidget(space, 5, 3, 1, 4);
     keyboardLayout->addWidget(clear, 5, 7, 1, 2);
     keyboardLayout->addWidget(done, 5, 9);
-    keyboardPanel_->setMaximumHeight(175);
+    keyboardPanel_->setMaximumHeight(205);
     keyboardPanel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     keyboardPanel_->setAttribute(Qt::WA_StyledBackground, true);
     keyboardPanel_->setStyleSheet(QStringLiteral("background: #e8edf0; border: 1px solid #b9c5cc;"));

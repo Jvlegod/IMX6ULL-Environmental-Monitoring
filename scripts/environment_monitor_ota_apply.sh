@@ -12,6 +12,8 @@ cp -p "$app_path" "$backup_path"
 mv -f "$new_path" "$app_path"
 chmod 0755 "$app_path"
 
+sync
+sleep 1
 nohup "$app_path" </dev/null >/tmp/environment_monitor_ota.log 2>&1 &
 new_pid=$!
 sleep 5
