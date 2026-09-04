@@ -59,9 +59,9 @@ Desktop builds use the standard writable application configuration directory. Th
 
 ## Acquisition tasks
 
-The `采集任务` control starts BMP280, RS485 temperature/humidity and VEML7700 together. A task can run for a specified duration or between an absolute start and end time. The task starts the provider at the configured start time, stops it at the configured end time, and appends all sensor fields to a CSV file.
+The `采集任务` control allows BMP280, RS485 temperature/humidity and VEML7700 to be selected independently. A task can run for a specified duration or between an absolute start and end time. The task starts the selected devices at the configured start time, stops them at the configured end time, and appends the selected sensor fields to a CSV file.
 
-The current simulated provider receives `SensorAll` when a task starts. A hardware provider should read all requested sub-devices in one sampling cycle and emit a complete `SensorSnapshot`. The current task output is CSV rather than SQLite.
+The current simulated provider receives a device mask when a task starts. A hardware provider should read only the selected sub-devices and emit a `SensorSnapshot` with unselected values left invalid. The current task output is CSV rather than SQLite.
 
 The CSV contains an ISO timestamp and all sensor columns:
 
@@ -69,7 +69,7 @@ The CSV contains an ISO timestamp and all sensor columns:
 timestamp,bmp280_temperature,bmp280_pressure,rs485_humidity
 ```
 
-When a task starts, the provider uses the all-device mask. When it finishes or is stopped, the provider returns to the normal sampling state. Abnormal-data reporting remains on-screen only; audio reporting is reserved for a later version.
+When a task starts, the provider uses the selected device mask. When it finishes or is stopped, the provider returns to the normal sampling state. Abnormal-data reporting remains on-screen only; audio reporting is reserved for a later version.
 
 ## ESP8266 WiFi setup
 

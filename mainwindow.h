@@ -50,6 +50,7 @@ private:
     QComboBox *samplingIntervalCombo_;
     QLabel *lastUpdateLabel_;
     QLabel *alertLabel_;
+    QLabel *acquisitionStatusLabel_;
     QLabel *temperatureValue_;
     QLabel *temperatureUnit_;
     QLabel *humidityValue_;
@@ -81,6 +82,7 @@ private:
     int acquisitionDeviceMask_;
     bool acquisitionActive_;
     bool acquisitionScheduled_;
+    bool samplingActive_;
 };
 
 #endif
