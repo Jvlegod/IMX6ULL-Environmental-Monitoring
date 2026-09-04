@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QFile>
 #include <QMetaType>
 #include <QAbstractButton>
 #include <QElapsedTimer>
@@ -34,6 +36,12 @@ private:
 
 int main(int argc, char *argv[])
 {
+    if (!qEnvironmentVariableIsSet("XDG_RUNTIME_DIR")) {
+        const QString runtimeDirectory = QStringLiteral("/tmp/runtime-environment-monitor");
+        QDir().mkpath(runtimeDirectory);
+        QFile::setPermissions(runtimeDirectory, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        qputenv("XDG_RUNTIME_DIR", runtimeDirectory.toLocal8Bit());
+    }
     QApplication app(argc, argv);
     TouchDebounceFilter touchDebounce;
     app.installEventFilter(&touchDebounce);
