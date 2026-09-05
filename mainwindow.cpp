@@ -520,7 +520,7 @@ void MainWindow::updateSnapshot(const SensorSnapshot &snapshot)
     const auto updateMetric = [](double value, QLabel *valueLabel, QLabel *unitLabel,
                                  QVector<double> *series, const QString &unit, int decimals) {
         if (!qIsFinite(value)) {
-            valueLabel->setText(QStringLiteral("--"));
+            valueLabel->setText(QStringLiteral("-"));
             unitLabel->setText(QStringLiteral("未采集"));
             return;
         }
