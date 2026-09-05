@@ -162,7 +162,7 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     alertLabel_->setObjectName(QStringLiteral("alert"));
     root->addWidget(alertLabel_);
     setCentralWidget(central);
-    statusBar()->showMessage(QStringLiteral("模拟采集模式"));
+    statusBar()->showMessage(QStringLiteral("采集模式"));
 
     connect(provider_, &ISensorProvider::snapshotReady, this, &MainWindow::updateSnapshot);
     connect(provider_, &ISensorProvider::deviceStatusChanged, this, &MainWindow::updateDeviceStatus);

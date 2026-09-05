@@ -36,11 +36,14 @@ export QT_QPA_PLATFORM=linuxfb
 
 ## Hardware integration
 
-`ISensorProvider` is the stable boundary for hardware access. Implement a provider that emits `SensorSnapshot` and `deviceStatusChanged`, then construct it in `main.cpp` instead of `SimulatedSensorProvider`.
+`ISensorProvider` is the stable boundary for hardware access. The current provider keeps the desktop simulation for BMP280 and RS485, and reads VEML7700 from the kernel IIO interface when available.
 
 - BMP280: read the existing Linux IIO files such as `in_pressure_input` and `in_temp_input`.
 - RS485: add the confirmed Modbus RTU or custom-frame parser.
-- VEML7700: add an I2C reader after its bus address and kernel access path are confirmed.
+- VEML7700: use the kernel IIO channel described below.
+  The provider now reads the kernel IIO in_illuminance_input channel and discovers the device by its name file. The board path is normally /sys/bus/iio/devices/iio:deviceX/in_illuminance_input where name is veml7700.
+  Verify the driver on the board with: for d in /sys/bus/iio/devices/iio:device*; do printf "%s: " "$d"; cat "$d/name" 2>/dev/null; done. Then read /sys/bus/iio/devices/iio:deviceX/in_illuminance_input.
+  For an alternate sysfs layout, set ENVIRONMENT_MONITOR_IIO_ROOT; for a direct device directory or input file, set ENVIRONMENT_MONITOR_VEML7700_SYSFS.
 - Serial WiFi: use the built-in ESP8266 configuration dialog to open the UART, scan nearby APs and join a network.
 
 ## Sampling and threshold configuration

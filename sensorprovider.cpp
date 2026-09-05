@@ -1,10 +1,13 @@
 #include "sensorprovider.h"
 
+#include <QDir>
+#include <QFile>
 #include <QTimer>
 #include <QtMath>
 
 SimulatedSensorProvider::SimulatedSensorProvider(QObject *parent)
-    : ISensorProvider(parent), timer_(new QTimer(this)), sampleIndex_(0), enabledDevices_(SensorAll)
+    : ISensorProvider(parent), timer_(new QTimer(this)), sampleIndex_(0), enabledDevices_(SensorAll),
+      veml7700Path_(discoverVeml7700Path()), veml7700Online_(!veml7700Path_.isEmpty())
 {
     timer_->setInterval(1000);
     connect(timer_, &QTimer::timeout, this, &SimulatedSensorProvider::sample);
@@ -55,7 +58,16 @@ void SimulatedSensorProvider::updateDeviceStatuses()
     };
     update(QStringLiteral("BMP280 / I2C"), SensorBmp280);
     update(QStringLiteral("RS485 温湿度计"), SensorRs485);
-    update(QStringLiteral("VEML7700 / I2C"), SensorVeml7700);
+    const bool vemlEnabled = enabledDevices_ & SensorVeml7700;
+    emit deviceStatusChanged(QStringLiteral("VEML7700 / I2C"),
+                             vemlEnabled && collecting && veml7700Online_,
+                             !vemlEnabled ? QStringLiteral("已禁用")
+                                          : veml7700Path_.isEmpty()
+                                                ? (collecting ? QStringLiteral("模拟采集") : QStringLiteral("等待采集"))
+                                                : (collecting
+                                                       ? (veml7700Online_ ? QStringLiteral("IIO 采集")
+                                                                          : QStringLiteral("IIO 读取失败"))
+                                                       : QStringLiteral("等待采集")));
 }
 
 void SimulatedSensorProvider::sample()
@@ -69,7 +81,70 @@ void SimulatedSensorProvider::sample()
         ? 101.25 + 0.32 * qSin(t * 0.35) : qQNaN();
     snapshot.humidity = enabledDevices_ & SensorRs485
         ? 54.0 + 8.0 * qSin(t * 0.72 + 0.8) : qQNaN();
-    snapshot.illuminance = enabledDevices_ & SensorVeml7700
-        ? qMax(0.0, 480.0 + 260.0 * qSin(t * 0.28 - 0.6)) : qQNaN();
+    if (enabledDevices_ & SensorVeml7700) {
+        if (veml7700Path_.isEmpty()) {
+            snapshot.illuminance = qMax(0.0, 480.0 + 260.0 * qSin(t * 0.28 - 0.6));
+        } else {
+            QString errorMessage;
+            if (!readVeml7700(&snapshot.illuminance, &errorMessage)) {
+                snapshot.illuminance = qQNaN();
+                if (veml7700Online_) {
+                    veml7700Online_ = false;
+                    emit providerError(QStringLiteral("VEML7700 IIO 读取失败: %1").arg(errorMessage));
+                    updateDeviceStatuses();
+                }
+            } else if (!veml7700Online_) {
+                veml7700Online_ = true;
+                updateDeviceStatuses();
+            }
+        }
+    } else {
+        snapshot.illuminance = qQNaN();
+    }
     emit snapshotReady(snapshot);
+}
+
+QString SimulatedSensorProvider::discoverVeml7700Path() const
+{
+    const QString configuredPath = qEnvironmentVariable("ENVIRONMENT_MONITOR_VEML7700_SYSFS").trimmed();
+    if (!configuredPath.isEmpty())
+        return QFile::exists(configuredPath) ? configuredPath : QString();
+
+    const QString iioRoot = qEnvironmentVariable("ENVIRONMENT_MONITOR_IIO_ROOT",
+                                                  QStringLiteral("/sys/bus/iio/devices"));
+    const QDir root(iioRoot);
+    const QStringList devices = root.entryList(QStringList() << QStringLiteral("iio:device*"),
+                                                QDir::Dirs | QDir::NoDotAndDotDot,
+                                                QDir::Name);
+    for (const QString &device : devices) {
+        QFile nameFile(root.filePath(device + QStringLiteral("/name")));
+        if (!nameFile.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        if (QString::fromLocal8Bit(nameFile.readAll()).trimmed().compare(QStringLiteral("veml7700"),
+                                                                           Qt::CaseInsensitive) == 0)
+            return root.filePath(device);
+    }
+    return QString();
+}
+
+bool SimulatedSensorProvider::readVeml7700(double *illuminance, QString *errorMessage) const
+{
+    const QString inputPath = veml7700Path_.endsWith(QStringLiteral("_input"))
+        ? veml7700Path_ : veml7700Path_ + QStringLiteral("/in_illuminance_input");
+    QFile inputFile(inputPath);
+    if (!inputFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (errorMessage)
+            *errorMessage = inputFile.errorString();
+        return false;
+    }
+
+    bool ok = false;
+    const double value = QString::fromLocal8Bit(inputFile.readAll()).trimmed().toDouble(&ok);
+    if (!ok || !qIsFinite(value) || value < 0.0) {
+        if (errorMessage)
+            *errorMessage = QStringLiteral("in_illuminance_input 返回无效值");
+        return false;
+    }
+    *illuminance = value;
+    return true;
 }

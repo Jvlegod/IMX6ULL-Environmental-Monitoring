@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QDateTime>
+#include <QString>
 
 struct SensorSnapshot
 {
@@ -60,9 +61,13 @@ private slots:
 
 private:
     void updateDeviceStatuses();
+    QString discoverVeml7700Path() const;
+    bool readVeml7700(double *illuminance, QString *errorMessage) const;
     class QTimer *timer_;
     int sampleIndex_;
     int enabledDevices_;
+    QString veml7700Path_;
+    bool veml7700Online_;
 };
 
 #endif
