@@ -9,32 +9,48 @@
 #include <QEvent>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 
 class TouchDebounceFilter final : public QObject
 {
 public:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
-        if (event->type() != QEvent::MouseButtonRelease || !qobject_cast<QAbstractButton *>(watched))
+        auto *button = qobject_cast<QAbstractButton *>(watched);
+        if (!button
+            || (event->type() != QEvent::MouseButtonPress
+                && event->type() != QEvent::MouseButtonRelease))
             return QObject::eventFilter(watched, event);
-        if (qobject_cast<QAbstractButton *>(watched)->property("touchDebounce").isValid()
-            && !qobject_cast<QAbstractButton *>(watched)->property("touchDebounce").toBool())
+        if (button->property("touchDebounce").isValid()
+            && !button->property("touchDebounce").toBool())
             return QObject::eventFilter(watched, event);
         if (!timer_.isValid()) timer_.start();
         const qint64 now = timer_.elapsed();
-        auto *button = qobject_cast<QAbstractButton *>(watched);
-        const qint64 last = lastRelease_.value(button, -1000);
-        lastRelease_.insert(button, now);
-        if (now - last < 300) {
+
+        if (event->type() == QEvent::MouseButtonPress) {
+            const qint64 last = lastRelease_.value(button, -1000);
+            if (now - last < 300) {
+                suppressed_.insert(button);
+                event->accept();
+                return true;
+            }
+            suppressed_.remove(button);
+            return QObject::eventFilter(watched, event);
+        }
+
+        if (suppressed_.remove(button)) {
+            lastRelease_.insert(button, now);
             event->accept();
             return true;
         }
+        lastRelease_.insert(button, now);
         return QObject::eventFilter(watched, event);
     }
 
 private:
     QElapsedTimer timer_;
     QHash<QAbstractButton *, qint64> lastRelease_;
+    QSet<QAbstractButton *> suppressed_;
 };
 
 int main(int argc, char *argv[])
