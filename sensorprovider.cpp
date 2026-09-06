@@ -202,7 +202,6 @@ bool SimulatedSensorProvider::readBmp580(double *temperature, double *pressure,
         return false;
     if (!readValue(bmp580Path_ + QStringLiteral("/in_pressure_input"), pressure))
         return false;
-    *pressure /= 1000.0;
     return true;
 }
 
