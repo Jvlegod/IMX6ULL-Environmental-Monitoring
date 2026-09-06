@@ -12,7 +12,7 @@ cmake --build build
 ./build/environment_monitor
 ```
 
-The current version displays temperature, humidity, pressure, illuminance, trend lines, configurable sampling intervals, configurable threshold alerts and connection states for BMP280, RS485, VEML7700 and serial WiFi. Abnormal-data reporting currently appears on screen; audio reporting is reserved for a later version.
+The current version displays temperature, humidity, pressure, illuminance, trend lines, configurable sampling intervals, configurable threshold alerts and connection states for BMP580, RS485, VEML7700 and serial WiFi. Abnormal-data reporting currently appears on screen; audio reporting is reserved for a later version.
 
 ## IMX6ULL deployment
 
@@ -36,9 +36,9 @@ export QT_QPA_PLATFORM=linuxfb
 
 ## Hardware integration
 
-`ISensorProvider` is the stable boundary for hardware access. The current provider keeps the desktop simulation for BMP280 and RS485, and reads VEML7700 from the kernel IIO interface when available.
+`ISensorProvider` is the stable boundary for hardware access. The current provider reads BMP580 and VEML7700 from the kernel IIO interface when available, while retaining the RS485 desktop simulation.
 
-- BMP280: read the existing Linux IIO files such as `in_pressure_input` and `in_temp_input`.
+- BMP580: read the kernel IIO files `in_pressure_input` and `in_temp_input`.
 - RS485: add the confirmed Modbus RTU or custom-frame parser.
 - VEML7700: use the kernel IIO channel described below.
   The provider now reads the kernel IIO in_illuminance_input channel and discovers the device by its name file. The board path is normally /sys/bus/iio/devices/iio:deviceX/in_illuminance_input where name is veml7700.
@@ -62,14 +62,14 @@ Desktop builds use the standard writable application configuration directory. Th
 
 ## Acquisition tasks
 
-The device status table allows BMP280, RS485 temperature/humidity and VEML7700 to be enabled independently with checkboxes. The `采集时间` dialog only configures manual mode, a specified duration, or an absolute start and end time. The top `开始采集` and `暂停采集` button is the single runtime control.
+The device status table allows BMP580 over SPI, RS485 temperature/humidity and VEML7700 to be enabled independently with checkboxes. The `采集时间` dialog only configures manual mode, a specified duration, or an absolute start and end time. The top `开始采集` and `暂停采集` button is the single runtime control.
 
 The current simulated provider receives a device mask when a task starts. A hardware provider should read only the selected sub-devices and emit a `SensorSnapshot` with unselected values left invalid. The current task output is CSV rather than SQLite.
 
 The CSV contains an ISO timestamp and all sensor columns:
 
 ```text
-timestamp,bmp280_temperature,bmp280_pressure,rs485_humidity,veml7700_illuminance
+timestamp,bmp580_temperature,bmp580_pressure,rs485_humidity,veml7700_illuminance
 ```
 
 The `采集服务` row follows the provider's actual start and stop state automatically. Sensor rows show online, standby, or disabled according to collection state and their checkbox. Abnormal-data reporting remains on-screen only; audio reporting is reserved for a later version.
@@ -90,7 +90,7 @@ References:
 - https://doc.qt.io/qt-5/qtwidgets-index.html
 - https://doc.qt.io/qt-5/qtcharts-index.html
 - https://doc.qt.io/qt-5/cmake-get-started.html
-- https://www.bosch-sensortec.com/products/environmental-sensors/pressure-sensors/bmp280/
+- https://www.bosch-sensortec.com/products/environmental-sensors/pressure-sensors/bmp580/
 - https://docs.espressif.com/projects/esp-at/en/latest/esp8266/AT_Command_Set/Wi-Fi_AT_Commands.html
 - `../../【正点原子】WIFI模块ATK-ESP8266资料（新资料）/4，参考资料/ESP8266_AT指令集V2.1.0.pdf`
 - `../../【正点原子】WIFI模块ATK-ESP8266资料（新资料）/ATK-MW8266D模块用户手册_V1.3.pdf`

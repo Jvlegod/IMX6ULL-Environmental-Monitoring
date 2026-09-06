@@ -15,10 +15,10 @@ struct SensorSnapshot
 };
 
 enum SensorDevice {
-    SensorBmp280 = 1,
+    SensorBmp580 = 1,
     SensorRs485 = 2,
     SensorVeml7700 = 4,
-    SensorAll = SensorBmp280 | SensorRs485 | SensorVeml7700
+    SensorAll = SensorBmp580 | SensorRs485 | SensorVeml7700
 };
 
 Q_DECLARE_METATYPE(SensorSnapshot)
@@ -61,11 +61,15 @@ private slots:
 
 private:
     void updateDeviceStatuses();
+    QString discoverBmp580Path() const;
+    bool readBmp580(double *temperature, double *pressure, QString *errorMessage) const;
     QString discoverVeml7700Path() const;
     bool readVeml7700(double *illuminance, QString *errorMessage) const;
     class QTimer *timer_;
     int sampleIndex_;
     int enabledDevices_;
+    QString bmp580Path_;
+    bool bmp580Online_;
     QString veml7700Path_;
     bool veml7700Online_;
 };

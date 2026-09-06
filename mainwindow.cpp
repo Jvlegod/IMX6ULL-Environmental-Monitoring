@@ -39,7 +39,7 @@ const int kMaxPoints = 60;
 
 int sensorFlagForDevice(const QString &device)
 {
-    if (device == QStringLiteral("BMP280 / I2C")) return SensorBmp280;
+    if (device == QStringLiteral("BMP580 / SPI")) return SensorBmp580;
     if (device == QStringLiteral("RS485 温湿度计")) return SensorRs485;
     if (device == QStringLiteral("VEML7700 / I2C")) return SensorVeml7700;
     return 0;
@@ -228,7 +228,7 @@ void MainWindow::showAcquisitionDialog()
     auto *form = new QFormLayout;
     QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
     QStringList enabledDevices;
-    if (enabledDeviceMask_ & SensorBmp280) enabledDevices << QStringLiteral("BMP280");
+    if (enabledDeviceMask_ & SensorBmp580) enabledDevices << QStringLiteral("BMP580");
     if (enabledDeviceMask_ & SensorRs485) enabledDevices << QStringLiteral("RS485");
     if (enabledDeviceMask_ & SensorVeml7700) enabledDevices << QStringLiteral("VEML7700");
     form->addRow(QStringLiteral("已使能设备"), new QLabel(enabledDevices.isEmpty()
@@ -371,7 +371,7 @@ void MainWindow::handleAcquisitionTimer()
         if (needsHeader) {
             QTextStream stream(&acquisitionFile_);
             stream.setCodec("UTF-8");
-            stream << "timestamp,bmp280_temperature,bmp280_pressure,rs485_humidity,veml7700_illuminance\n";
+            stream << "timestamp,bmp580_temperature,bmp580_pressure,rs485_humidity,veml7700_illuminance\n";
             stream.flush();
         }
         provider_->start();
@@ -539,11 +539,11 @@ void MainWindow::updateSnapshot(const SensorSnapshot &snapshot)
 
     QStringList alerts;
     const int monitoredDevices = enabledDeviceMask_;
-    if ((monitoredDevices & SensorBmp280) && (!qIsFinite(snapshot.temperature) || snapshot.temperature < temperatureMinimum_ || snapshot.temperature > temperatureMaximum_))
+    if ((monitoredDevices & SensorBmp580) && (!qIsFinite(snapshot.temperature) || snapshot.temperature < temperatureMinimum_ || snapshot.temperature > temperatureMaximum_))
         alerts << QStringLiteral("温度超限");
     if ((monitoredDevices & SensorRs485) && (!qIsFinite(snapshot.humidity) || snapshot.humidity < humidityMinimum_ || snapshot.humidity > humidityMaximum_))
         alerts << QStringLiteral("湿度超限");
-    if ((monitoredDevices & SensorBmp280) && (!qIsFinite(snapshot.pressure) || snapshot.pressure < pressureMinimum_ || snapshot.pressure > pressureMaximum_))
+    if ((monitoredDevices & SensorBmp580) && (!qIsFinite(snapshot.pressure) || snapshot.pressure < pressureMinimum_ || snapshot.pressure > pressureMaximum_))
         alerts << QStringLiteral("气压超限");
     if ((monitoredDevices & SensorVeml7700) && (!qIsFinite(snapshot.illuminance) || snapshot.illuminance < illuminanceMinimum_ || snapshot.illuminance > illuminanceMaximum_))
         alerts << QStringLiteral("光照超限");

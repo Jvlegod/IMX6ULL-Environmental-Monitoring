@@ -7,6 +7,7 @@
 
 SimulatedSensorProvider::SimulatedSensorProvider(QObject *parent)
     : ISensorProvider(parent), timer_(new QTimer(this)), sampleIndex_(0), enabledDevices_(SensorAll),
+      bmp580Path_(discoverBmp580Path()), bmp580Online_(!bmp580Path_.isEmpty()),
       veml7700Path_(discoverVeml7700Path()), veml7700Online_(!veml7700Path_.isEmpty())
 {
     timer_->setInterval(1000);
@@ -56,8 +57,17 @@ void SimulatedSensorProvider::updateDeviceStatuses()
                                  enabled ? (collecting ? QStringLiteral("模拟采集") : QStringLiteral("等待采集"))
                                          : QStringLiteral("已禁用"));
     };
-    update(QStringLiteral("BMP280 / I2C"), SensorBmp280);
     update(QStringLiteral("RS485 温湿度计"), SensorRs485);
+    const bool bmp580Enabled = enabledDevices_ & SensorBmp580;
+    emit deviceStatusChanged(QStringLiteral("BMP580 / SPI"),
+                             bmp580Enabled && collecting && bmp580Online_,
+                             !bmp580Enabled ? QStringLiteral("已禁用")
+                                             : bmp580Path_.isEmpty()
+                                                   ? (collecting ? QStringLiteral("IIO 不可用") : QStringLiteral("等待采集"))
+                                                   : (collecting
+                                                          ? (bmp580Online_ ? QStringLiteral("IIO 采集")
+                                                                           : QStringLiteral("IIO 读取失败"))
+                                                          : QStringLiteral("等待采集")));
     const bool vemlEnabled = enabledDevices_ & SensorVeml7700;
     emit deviceStatusChanged(QStringLiteral("VEML7700 / I2C"),
                              vemlEnabled && collecting && veml7700Online_,
@@ -75,10 +85,27 @@ void SimulatedSensorProvider::sample()
     const double t = sampleIndex_++ / 10.0;
     SensorSnapshot snapshot;
     snapshot.timestamp = QDateTime::currentDateTime();
-    snapshot.temperature = enabledDevices_ & SensorBmp280
-        ? 23.5 + 1.8 * qSin(t) + 0.15 * qSin(t * 3.0) : qQNaN();
-    snapshot.pressure = enabledDevices_ & SensorBmp280
-        ? 101.25 + 0.32 * qSin(t * 0.35) : qQNaN();
+    snapshot.temperature = qQNaN();
+    snapshot.pressure = qQNaN();
+    if (enabledDevices_ & SensorBmp580) {
+        if (bmp580Path_.isEmpty())
+            bmp580Path_ = discoverBmp580Path();
+
+        QString errorMessage;
+        if (bmp580Path_.isEmpty() || !readBmp580(&snapshot.temperature, &snapshot.pressure, &errorMessage)) {
+            snapshot.temperature = qQNaN();
+            snapshot.pressure = qQNaN();
+            if (bmp580Online_) {
+                bmp580Online_ = false;
+                if (!errorMessage.isEmpty())
+                    emit providerError(QStringLiteral("BMP580 IIO 读取失败: %1").arg(errorMessage));
+                updateDeviceStatuses();
+            }
+        } else if (!bmp580Online_) {
+            bmp580Online_ = true;
+            updateDeviceStatuses();
+        }
+    }
     snapshot.humidity = enabledDevices_ & SensorRs485
         ? 54.0 + 8.0 * qSin(t * 0.72 + 0.8) : qQNaN();
     if (enabledDevices_ & SensorVeml7700) {
@@ -125,6 +152,58 @@ QString SimulatedSensorProvider::discoverVeml7700Path() const
             return root.filePath(device);
     }
     return QString();
+}
+
+QString SimulatedSensorProvider::discoverBmp580Path() const
+{
+    const QString configuredPath = qEnvironmentVariable("ENVIRONMENT_MONITOR_BMP580_SYSFS").trimmed();
+    if (!configuredPath.isEmpty())
+        return QFile::exists(configuredPath) ? configuredPath : QString();
+
+    const QString iioRoot = qEnvironmentVariable("ENVIRONMENT_MONITOR_IIO_ROOT",
+                                                  QStringLiteral("/sys/bus/iio/devices"));
+    const QDir root(iioRoot);
+    const QStringList devices = root.entryList(QStringList() << QStringLiteral("iio:device*"),
+                                                QDir::Dirs | QDir::NoDotAndDotDot,
+                                                QDir::Name);
+    for (const QString &device : devices) {
+        QFile nameFile(root.filePath(device + QStringLiteral("/name")));
+        if (!nameFile.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        if (QString::fromLocal8Bit(nameFile.readAll()).trimmed().compare(QStringLiteral("bmp580"),
+                                                                           Qt::CaseInsensitive) == 0)
+            return root.filePath(device);
+    }
+    return QString();
+}
+
+bool SimulatedSensorProvider::readBmp580(double *temperature, double *pressure,
+                                         QString *errorMessage) const
+{
+    const auto readValue = [errorMessage](const QString &path, double *value) {
+        QFile inputFile(path);
+        if (!inputFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            if (errorMessage)
+                *errorMessage = inputFile.errorString();
+            return false;
+        }
+        bool ok = false;
+        const double parsed = QString::fromLocal8Bit(inputFile.readAll()).trimmed().toDouble(&ok);
+        if (!ok || !qIsFinite(parsed)) {
+            if (errorMessage)
+                *errorMessage = QStringLiteral("IIO 返回无效值");
+            return false;
+        }
+        *value = parsed;
+        return true;
+    };
+
+    if (!readValue(bmp580Path_ + QStringLiteral("/in_temp_input"), temperature))
+        return false;
+    if (!readValue(bmp580Path_ + QStringLiteral("/in_pressure_input"), pressure))
+        return false;
+    *pressure /= 1000.0;
+    return true;
 }
 
 bool SimulatedSensorProvider::readVeml7700(double *illuminance, QString *errorMessage) const
