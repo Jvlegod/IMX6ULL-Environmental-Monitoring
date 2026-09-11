@@ -23,12 +23,14 @@ speed_t serialSpeed(int baud)
 }
 
 Esp8266Controller::Esp8266Controller(QObject *parent)
-    : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)),
+    : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)), statusTimer_(new QTimer(this)),
       operation_(Idle), simulated_(false), otaPromptHandled_(false), otaHeadersParsed_(false),
       otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false)
 {
     timeoutTimer_->setSingleShot(true);
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
+    statusTimer_->setInterval(5000);
+    connect(statusTimer_, &QTimer::timeout, this, &Esp8266Controller::pollWifiStatus);
 }
 
 Esp8266Controller::~Esp8266Controller() { closePort(); }
@@ -60,13 +62,15 @@ bool Esp8266Controller::openPort(const QString &path, int baudRate)
     notifier_ = new QSocketNotifier(fd_, QSocketNotifier::Read, this);
     connect(notifier_, &QSocketNotifier::activated, this, &Esp8266Controller::readAvailable);
     emit portStateChanged(true, QStringLiteral("%1 · %2 8N1").arg(path).arg(baudRate));
+    statusTimer_->start();
+    QTimer::singleShot(200, this, &Esp8266Controller::pollWifiStatus);
     return true;
 }
 
 void Esp8266Controller::closePort()
 {
     const bool wasOpen = isOpen();
-    timeoutTimer_->stop(); delete notifier_; notifier_ = nullptr;
+    timeoutTimer_->stop(); statusTimer_->stop(); delete notifier_; notifier_ = nullptr;
     if (otaFile_) { otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
     if (fd_ >= 0) ::close(fd_);
     fd_ = -1; simulated_ = false; operation_ = Idle; receiveBuffer_.clear();
@@ -74,6 +78,15 @@ void Esp8266Controller::closePort()
 }
 
 bool Esp8266Controller::isOpen() const { return simulated_ || fd_ >= 0; }
+
+
+void Esp8266Controller::pollWifiStatus()
+{
+    if (!isOpen() || operation_ != Idle) return;
+    if (simulated_) { emit connectionStateChanged(true, QStringLiteral("模拟 WiFi 已连接")); return; }
+    operation_ = QueryingStatus;
+    sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000);
+}
 
 void Esp8266Controller::scanNetworks()
 {
@@ -275,12 +288,26 @@ void Esp8266Controller::processLine(const QByteArray &line)
     else if (operation_ == Connecting && text == QStringLiteral("OK")) { operation_ = QueryingIp; sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000); }
     else if (operation_ == QueryingIp && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) { timeoutTimer_->stop(); operation_ = Idle; emit connectionStateChanged(true, text); }
     else if (operation_ == QueryingIp && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
+    else if (operation_ == QueryingStatus && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) {
+        timeoutTimer_->stop(); operation_ = Idle;
+        const bool connected = !text.contains(QStringLiteral("\"0.0.0.0\""));
+        emit connectionStateChanged(connected, connected ? text : QStringLiteral("WiFi 未连接"));
+    }
+    else if (operation_ == QueryingStatus && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
     else if (operation_ == OtaConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) { if (!otaPromptHandled_) sendOtaRequest(); }
     else if (operation_ == OtaWaitingPrompt && text == QStringLiteral(">")) { if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); } }
     else if (text == QStringLiteral("WIFI DISCONNECT")) emit connectionStateChanged(false, QStringLiteral("WiFi 已断开"));
 }
 
-void Esp8266Controller::timeout() { finishWithError(QStringLiteral("ESP8266 响应超时, 请检查 WiFi, 服务器地址和串口连接")); }
+void Esp8266Controller::timeout()
+{
+    if (operation_ == QueryingStatus) {
+        operation_ = Idle;
+        emit connectionStateChanged(false, QStringLiteral("WiFi 状态查询超时"));
+        return;
+    }
+    finishWithError(QStringLiteral("ESP8266 响应超时, 请检查 WiFi, 服务器地址和串口连接"));
+}
 void Esp8266Controller::finishWithError(const QString &message)
 {
     timeoutTimer_->stop();

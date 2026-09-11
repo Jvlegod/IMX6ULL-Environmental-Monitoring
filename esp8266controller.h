@@ -41,9 +41,10 @@ signals:
 private slots:
     void readAvailable();
     void timeout();
+    void pollWifiStatus();
 
 private:
-    enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp,
+    enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp, QueryingStatus,
                      OtaSettingMode, OtaClosing, OtaConnecting, OtaWaitingPrompt, OtaReceiving };
     void sendCommand(const QByteArray &command, int timeoutMs);
     void sendOtaRequest();
@@ -60,6 +61,7 @@ private:
     int fd_;
     QSocketNotifier *notifier_;
     QTimer *timeoutTimer_;
+    QTimer *statusTimer_;
     QByteArray receiveBuffer_;
     QVector<WifiNetwork> networks_;
     Operation operation_;
