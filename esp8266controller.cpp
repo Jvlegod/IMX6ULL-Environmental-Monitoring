@@ -129,7 +129,7 @@ void Esp8266Controller::publishTelemetry(const SensorSnapshot &snapshot)
                              {QStringLiteral("humidity_percent"), snapshot.humidity},
                              {QStringLiteral("illuminance_lux"), snapshot.illuminance},
                              {QStringLiteral("collision_warning"), snapshot.collisionWarning}};
-    QString payload = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+    QString payload = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)).trimmed();
     payload.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
     payload.replace(QStringLiteral("\""), QStringLiteral("\\\""));
     const QString topic = QStringLiteral("gateway/%1/telemetry").arg(mqttDeviceId_);
