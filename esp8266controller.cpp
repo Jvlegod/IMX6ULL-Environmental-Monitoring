@@ -61,7 +61,7 @@ bool Esp8266Controller::openPort(const QString &path, int baudRate)
     tcflush(fd_, TCIOFLUSH);
     notifier_ = new QSocketNotifier(fd_, QSocketNotifier::Read, this);
     connect(notifier_, &QSocketNotifier::activated, this, &Esp8266Controller::readAvailable);
-    mqttHost_ = qEnvironmentVariable("ENVIRONMENT_MONITOR_MQTT_HOST", QStringLiteral("192.168.1.100"));
+    mqttHost_ = qEnvironmentVariable("ENVIRONMENT_MONITOR_MQTT_HOST", QStringLiteral("192.168.43.4"));
     mqttPort_ = static_cast<quint16>(qEnvironmentVariableIntValue("ENVIRONMENT_MONITOR_MQTT_PORT"));
     if (mqttPort_ == 0) mqttPort_ = 1883;
     mqttDeviceId_ = qEnvironmentVariable("ENVIRONMENT_MONITOR_DEVICE_ID", QStringLiteral("gateway-001"));

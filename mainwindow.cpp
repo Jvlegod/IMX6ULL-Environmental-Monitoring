@@ -183,6 +183,16 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     connect(acquisitionTimer_, &QTimer::timeout, this, &MainWindow::handleAcquisitionTimer);
     updateSamplingInterval(samplingIntervalCombo_->currentIndex());
     provider_->setEnabledDevices(enabledDeviceMask_);
+
+    wifiDialog_ = new WifiDialog(this);
+    wifiDialog_->hide();
+    connect(provider_, &ISensorProvider::snapshotReady, wifiDialog_, &WifiDialog::publishTelemetry);
+    connect(wifiDialog_, &WifiDialog::wifiStateChanged, this, [this](bool connected, const QString &detail) {
+        updateDeviceStatus(QStringLiteral("串口 WiFi"), connected, detail);
+        wifiStatusIcon_->setEnabled(connected);
+        wifiStatusIcon_->setToolTip(connected ? QStringLiteral("WiFi 已连接")
+                                               : QStringLiteral("WiFi 未连接: %1").arg(detail));
+    });
 }
 
 void MainWindow::loadSettings()
@@ -493,16 +503,7 @@ void MainWindow::showThresholdDialog()
 
 void MainWindow::showWifiDialog()
 {
-    if (!wifiDialog_) {
-        wifiDialog_ = new WifiDialog(this);
-        connect(provider_, &ISensorProvider::snapshotReady, wifiDialog_, &WifiDialog::publishTelemetry);
-        connect(wifiDialog_, &WifiDialog::wifiStateChanged, this, [this](bool connected, const QString &detail) {
-            updateDeviceStatus(QStringLiteral("串口 WiFi"), connected, detail);
-            wifiStatusIcon_->setEnabled(connected);
-            wifiStatusIcon_->setToolTip(connected ? QStringLiteral("WiFi 已连接")
-                                                   : QStringLiteral("WiFi 未连接: %1").arg(detail));
-        });
-    }
+    if (!wifiDialog_) wifiDialog_ = new WifiDialog(this);
     wifiDialog_->show();
     wifiDialog_->raise();
     wifiDialog_->activateWindow();
