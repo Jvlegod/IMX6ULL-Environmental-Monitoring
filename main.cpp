@@ -28,28 +28,27 @@ public:
         const qint64 now = timer_.elapsed();
 
         if (event->type() == QEvent::MouseButtonPress) {
-            const qint64 last = lastRelease_.value(button, -1000);
-            if (now - last < 300) {
+            const qint64 last = lastPress_.value(button, -1000);
+            if (now - last < 500) {
                 suppressed_.insert(button);
                 event->accept();
                 return true;
             }
+            lastPress_.insert(button, now);
             suppressed_.remove(button);
             return QObject::eventFilter(watched, event);
         }
 
         if (suppressed_.remove(button)) {
-            lastRelease_.insert(button, now);
             event->accept();
             return true;
         }
-        lastRelease_.insert(button, now);
         return QObject::eventFilter(watched, event);
     }
 
 private:
     QElapsedTimer timer_;
-    QHash<QAbstractButton *, qint64> lastRelease_;
+    QHash<QAbstractButton *, qint64> lastPress_;
     QSet<QAbstractButton *> suppressed_;
 };
 

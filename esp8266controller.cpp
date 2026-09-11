@@ -78,15 +78,17 @@ bool Esp8266Controller::isOpen() const { return simulated_ || fd_ >= 0; }
 void Esp8266Controller::scanNetworks()
 {
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
+    if (operation_ != Idle) { emit operationFailed(QStringLiteral("ESP8266 当前正在执行其他操作")); return; }
     networks_.clear();
-    if (simulated_) { QTimer::singleShot(500, this, [this] { networks_ = {{QStringLiteral("Office-WiFi"), -38, 3}, {QStringLiteral("Lab-2.4G"), -56, 3}, {QStringLiteral("Guest"), -72, 0}}; emit scanFinished(networks_); }); return; }
+    if (simulated_) { operation_ = Scanning; QTimer::singleShot(500, this, [this] { networks_ = {{QStringLiteral("Office-WiFi"), -38, 3}, {QStringLiteral("Lab-2.4G"), -56, 3}, {QStringLiteral("Guest"), -72, 0}}; operation_ = Idle; emit scanFinished(networks_); }); return; }
     operation_ = WaitingForScanMode; sendCommand(QByteArrayLiteral("AT+CWMODE_CUR=1\r\n"), 3000);
 }
 
 void Esp8266Controller::connectNetwork(const QString &ssid, const QString &password)
 {
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
-    if (simulated_) { QTimer::singleShot(900, this, [this, ssid] { emit connectionStateChanged(true, QStringLiteral("已连接 %1 · 192.168.1.108").arg(ssid)); }); return; }
+    if (operation_ != Idle) { emit operationFailed(QStringLiteral("ESP8266 当前正在执行其他操作")); return; }
+    if (simulated_) { operation_ = Connecting; QTimer::singleShot(900, this, [this, ssid] { operation_ = Idle; emit connectionStateChanged(true, QStringLiteral("已连接 %1 · 192.168.1.108").arg(ssid)); }); return; }
     operation_ = Connecting;
     const QString command = QStringLiteral("AT+CWJAP=\"%1\",\"%2\"\r\n").arg(escapeArgument(ssid), escapeArgument(password));
     sendCommand(command.toUtf8(), 25000);

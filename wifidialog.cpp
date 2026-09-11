@@ -287,16 +287,16 @@ void WifiDialog::hideKeyboard()
 
 void WifiDialog::scanNetworks()
 {
-    controller_.scanNetworks();
     setBusy(true);
+    controller_.scanNetworks();
 }
 
 void WifiDialog::connectNetwork()
 {
     if (ssidEdit_->text().isEmpty()) { showError(QStringLiteral("请输入 WiFi 名称")); return; }
     saveSettings();
-    controller_.connectNetwork(ssidEdit_->text(), passwordEdit_->text());
     setBusy(true);
+    controller_.connectNetwork(ssidEdit_->text(), passwordEdit_->text());
 }
 
 void WifiDialog::showScanResults(const QVector<WifiNetwork> &networks)
