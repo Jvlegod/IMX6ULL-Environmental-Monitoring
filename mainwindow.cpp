@@ -39,7 +39,7 @@ const int kMaxPoints = 60;
 
 int sensorFlagForDevice(const QString &device)
 {
-    if (device == QStringLiteral("BMP580 / SPI")) return SensorBmp580;
+    if (device == QStringLiteral("BMP580 / I2C")) return SensorBmp580;
     if (device == QStringLiteral("RS485 温湿度计")) return SensorRs485;
     if (device == QStringLiteral("VEML7700 / I2C")) return SensorVeml7700;
     return 0;
@@ -549,6 +549,8 @@ void MainWindow::updateSnapshot(const SensorSnapshot &snapshot)
         alerts << QStringLiteral("光照超限");
     setAlert(alerts.isEmpty() ? QStringLiteral("状态正常 · 当前未发现超限数据")
                              : QStringLiteral("告警: ") + alerts.join(QStringLiteral(" / ")), !alerts.isEmpty());
+    if (snapshot.collisionWarning)
+        statusBar()->showMessage(QStringLiteral("碰撞预警: 检测到剧烈晃动"), 3000);
     recordSnapshot(snapshot);
 }
 

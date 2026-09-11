@@ -11,6 +11,7 @@ struct SensorSnapshot
     double temperature = 0.0;
     double humidity = 0.0;
     double pressure = 0.0;
+    bool collisionWarning = false;
     double illuminance = 0.0;
 };
 
@@ -63,6 +64,8 @@ private:
     void updateDeviceStatuses();
     QString discoverBmp580Path() const;
     bool readBmp580(double *temperature, double *pressure, QString *errorMessage) const;
+    QString discoverIcm20608Path() const;
+    bool readIcm20608(double *accelMagnitude, QString *errorMessage) const;
     QString discoverVeml7700Path() const;
     bool readVeml7700(double *illuminance, QString *errorMessage) const;
     class QTimer *timer_;
@@ -72,6 +75,9 @@ private:
     bool bmp580Online_;
     QString veml7700Path_;
     bool veml7700Online_;
+    QString icm20608Path_;
+    bool icm20608BaselineValid_;
+    double icm20608Baseline_;
 };
 
 #endif

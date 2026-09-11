@@ -8,7 +8,8 @@
 SimulatedSensorProvider::SimulatedSensorProvider(QObject *parent)
     : ISensorProvider(parent), timer_(new QTimer(this)), sampleIndex_(0), enabledDevices_(SensorAll),
       bmp580Path_(discoverBmp580Path()), bmp580Online_(!bmp580Path_.isEmpty()),
-      veml7700Path_(discoverVeml7700Path()), veml7700Online_(!veml7700Path_.isEmpty())
+      veml7700Path_(discoverVeml7700Path()), veml7700Online_(!veml7700Path_.isEmpty()),
+      icm20608Path_(discoverIcm20608Path()), icm20608BaselineValid_(false), icm20608Baseline_(0.0)
 {
     timer_->setInterval(1000);
     connect(timer_, &QTimer::timeout, this, &SimulatedSensorProvider::sample);
@@ -59,7 +60,7 @@ void SimulatedSensorProvider::updateDeviceStatuses()
     };
     update(QStringLiteral("RS485 温湿度计"), SensorRs485);
     const bool bmp580Enabled = enabledDevices_ & SensorBmp580;
-    emit deviceStatusChanged(QStringLiteral("BMP580 / SPI"),
+    emit deviceStatusChanged(QStringLiteral("BMP580 / I2C"),
                              bmp580Enabled && collecting && bmp580Online_,
                              !bmp580Enabled ? QStringLiteral("已禁用")
                                              : bmp580Path_.isEmpty()
@@ -87,6 +88,18 @@ void SimulatedSensorProvider::sample()
     snapshot.timestamp = QDateTime::currentDateTime();
     snapshot.temperature = qQNaN();
     snapshot.pressure = qQNaN();
+    double accelMagnitude = 0.0;
+    if (icm20608Path_.isEmpty())
+        icm20608Path_ = discoverIcm20608Path();
+    QString icmError;
+    const bool icmValid = !icm20608Path_.isEmpty() && readIcm20608(&accelMagnitude, &icmError);
+    if (icmValid) {
+        if (!icm20608BaselineValid_) {
+            icm20608Baseline_ = accelMagnitude;
+            icm20608BaselineValid_ = true;
+        }
+        snapshot.collisionWarning = qAbs(accelMagnitude - icm20608Baseline_) > 6000.0;
+    }
     if (enabledDevices_ & SensorBmp580) {
         if (bmp580Path_.isEmpty())
             bmp580Path_ = discoverBmp580Path();
@@ -129,6 +142,44 @@ void SimulatedSensorProvider::sample()
         snapshot.illuminance = qQNaN();
     }
     emit snapshotReady(snapshot);
+}
+
+
+QString SimulatedSensorProvider::discoverIcm20608Path() const
+{
+    const QString iioRoot = qEnvironmentVariable("ENVIRONMENT_MONITOR_IIO_ROOT",
+                                                  QStringLiteral("/sys/bus/iio/devices"));
+    const QDir root(iioRoot);
+    const QStringList devices = root.entryList(QStringList() << QStringLiteral("iio:device*"),
+                                                QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QString &device : devices) {
+        QFile nameFile(root.filePath(device + QStringLiteral("/name")));
+        if (!nameFile.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        if (QString::fromLocal8Bit(nameFile.readAll()).trimmed().compare(QStringLiteral("icm20608"), Qt::CaseInsensitive) == 0)
+            return root.filePath(device);
+    }
+    return QString();
+}
+
+bool SimulatedSensorProvider::readIcm20608(double *accelMagnitude, QString *errorMessage) const
+{
+    double axis[3];
+    for (int i = 0; i < 3; ++i) {
+        QFile inputFile(icm20608Path_ + QStringLiteral("/in_accel_%1_raw").arg(QChar('x' + i)));
+        if (!inputFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            if (errorMessage) *errorMessage = inputFile.errorString();
+            return false;
+        }
+        bool ok = false;
+        axis[i] = QString::fromLocal8Bit(inputFile.readAll()).trimmed().toDouble(&ok);
+        if (!ok || !qIsFinite(axis[i])) {
+            if (errorMessage) *errorMessage = QStringLiteral("ICM-20608 加速度值无效");
+            return false;
+        }
+    }
+    *accelMagnitude = qSqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+    return true;
 }
 
 QString SimulatedSensorProvider::discoverVeml7700Path() const
