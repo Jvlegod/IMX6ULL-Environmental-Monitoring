@@ -191,6 +191,13 @@ void Esp8266Controller::readAvailable()
             if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); }
             continue;
         }
+        if (operation_ == HttpWaitingPrompt && receiveBuffer_.startsWith('>')) {
+            receiveBuffer_.remove(0, 1);
+            operation_ = HttpSending;
+            writeSerial(telemetryRequest_);
+            timeoutTimer_->start(5000);
+            continue;
+        }
         if (operation_ == OtaReceiving && receiveBuffer_.startsWith("+IPD,")) {
             const int colon = receiveBuffer_.indexOf(':');
             if (colon < 0) break;
