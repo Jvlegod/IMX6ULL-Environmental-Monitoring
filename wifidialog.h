@@ -4,6 +4,7 @@
 #include "esp8266controller.h"
 #include <QDialog>
 #include <QEvent>
+#include <QElapsedTimer>
 
 class QComboBox;
 class QLabel;
@@ -66,6 +67,7 @@ private:
     QWidget *keyboardPanel_;
     QLineEdit *keyboardEdit_;
     bool closeAllowed_;
+    QElapsedTimer keyboardTimer_;
 };
 
 #endif

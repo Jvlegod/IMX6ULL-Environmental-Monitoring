@@ -239,6 +239,8 @@ bool WifiDialog::eventFilter(QObject *watched, QEvent *event)
         const bool isKeyboardWidget = widget && (widget == keyboardPanel_ || keyboardPanel_->isAncestorOf(widget));
         if (isDialogWidget && !isKeyboardWidget
             && !qobject_cast<QLineEdit *>(watched)) {
+            if (keyboardTimer_.isValid() && keyboardTimer_.elapsed() < 500)
+                return true;
             hideKeyboard();
             return true;
         }
@@ -274,6 +276,7 @@ void WifiDialog::showKeyboard(QLineEdit *edit)
     if (keyboardEdit_ == edit && keyboardPanel_->isVisible()) return;
     keyboardEdit_ = edit;
     keyboardPanel_->setVisible(true);
+    keyboardTimer_.start();
     edit->setFocus();
 }
 
