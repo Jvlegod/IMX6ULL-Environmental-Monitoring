@@ -34,7 +34,7 @@ WifiDialog::WifiDialog(QWidget *parent)
       connectButton_(new QPushButton(QStringLiteral("连接网络"))),
       networkTable_(new QTableWidget(0, 3)), statusLabel_(new QLabel(QStringLiteral("未连接 ESP8266"))),
       otaHostEdit_(new QLineEdit(QStringLiteral("192.168.43.4"))),
-      otaPortEdit_(new QLineEdit(QStringLiteral("8080"))),
+      otaPortEdit_(new QLineEdit(QStringLiteral("18080"))),
       otaManifestEdit_(new QLineEdit(QStringLiteral("/manifest.json"))),
       otaButton_(new QPushButton(QStringLiteral("检查并升级应用"))), otaProgress_(new QProgressBar),
       keyboardPanel_(new QWidget(this)), keyboardEdit_(nullptr), closeAllowed_(false)

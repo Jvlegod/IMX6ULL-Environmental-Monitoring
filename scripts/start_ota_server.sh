@@ -6,7 +6,7 @@ SDK_ROOT="${QT_SDK_ROOT:-/home/jvle/Desktop/works/IMX6ULL/toolchains/qt5}"
 SDK_ENV="${SDK_ROOT}/environment-setup-cortexa7hf-neon-poky-linux-gnueabi"
 BUILD_DIR="${PROJECT_ROOT}/build-arm"
 OTA_DIR="${PROJECT_ROOT}/ota"
-PORT=8080
+PORT=18080
 VERSION="$(date +%Y.%m.%d.%H%M%S)"
 
 usage() {
@@ -15,7 +15,7 @@ usage() {
 
 选项:
   -v version  OTA 版本号, 默认使用当前时间
-  -p port     HTTP 端口, 默认 8080
+  -p port     HTTP 端口, 默认 18080
   -h          显示帮助
 EOF
 }

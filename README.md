@@ -107,7 +107,7 @@ cp build-arm/environment_monitor ota/environment_monitor
 sha256sum ota/environment_monitor
 stat -c '%s' ota/environment_monitor
 python3 scripts/make_ota_manifest.py --file ota/environment_monitor --version 0.2.0 --path /environment_monitor --output ota/manifest.json
-cd ota && python3 -m http.server 8080
+cd ota && python3 -m http.server 18080
 ```
 
 For one-command ARM build, manifest generation and HTTP server startup, run:
@@ -116,6 +116,6 @@ For one-command ARM build, manifest generation and HTTP server startup, run:
 ./scripts/start_ota_server.sh -v 0.2.0
 ```
 
-The script uses the local Qt ARM SDK, copies the generated `environment_monitor` into `ota/`, generates `manifest.json`, prints the computer LAN address and starts the server on port `8080`. The development board only needs to connect to WiFi and click `检查并升级应用`.
+The script uses the local Qt ARM SDK, copies the generated `environment_monitor` into `ota/`, generates `manifest.json`, prints the computer LAN address and starts the server on port `18080`. The development board only needs to connect to WiFi and click `检查并升级应用`.
 
-In `WiFi 配置`, set the computer IP, keep port `8080` and manifest path `/manifest.json`, then click `检查并升级应用`. The rootfs install must include `environment_monitor_ota_apply.sh`; the CMake install rule installs it to `/usr/bin`.
+In `WiFi 配置`, set the computer IP, keep port `18080` and manifest path `/manifest.json`, then click `检查并升级应用`. The rootfs install must include `environment_monitor_ota_apply.sh`; the CMake install rule installs it to `/usr/bin`.
