@@ -46,7 +46,7 @@ private slots:
     void pollWifiStatus();
 
 private:
-    enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp, QueryingStatus, MqttConfiguring, MqttConnecting,
+    enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp, QueryingStatus, HttpConnecting, HttpWaitingPrompt, HttpSending,
                      OtaSettingMode, OtaClosing, OtaConnecting, OtaWaitingPrompt, OtaReceiving };
     void sendCommand(const QByteArray &command, int timeoutMs);
     void sendOtaRequest();
@@ -88,6 +88,7 @@ private:
     QString mqttHost_;
     quint16 mqttPort_;
     QString mqttDeviceId_;
+    QByteArray telemetryRequest_;
 };
 
 Q_DECLARE_METATYPE(WifiNetwork)

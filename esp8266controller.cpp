@@ -62,19 +62,13 @@ bool Esp8266Controller::openPort(const QString &path, int baudRate)
     notifier_ = new QSocketNotifier(fd_, QSocketNotifier::Read, this);
     connect(notifier_, &QSocketNotifier::activated, this, &Esp8266Controller::readAvailable);
     mqttHost_ = qEnvironmentVariable("ENVIRONMENT_MONITOR_MQTT_HOST", QStringLiteral("192.168.43.4"));
-    mqttPort_ = static_cast<quint16>(qEnvironmentVariableIntValue("ENVIRONMENT_MONITOR_MQTT_PORT"));
-    if (mqttPort_ == 0) mqttPort_ = 1883;
+    mqttPort_ = static_cast<quint16>(qEnvironmentVariableIntValue("ENVIRONMENT_MONITOR_SERVER_PORT"));
+    if (mqttPort_ == 0) mqttPort_ = 8080;
     mqttDeviceId_ = qEnvironmentVariable("ENVIRONMENT_MONITOR_DEVICE_ID", QStringLiteral("gateway-001"));
     mqttReady_ = false;
     emit portStateChanged(true, QStringLiteral("%1 · %2 8N1").arg(path).arg(baudRate));
     statusTimer_->start();
     QTimer::singleShot(200, this, &Esp8266Controller::pollWifiStatus);
-    QTimer::singleShot(500, this, [this] {
-        if (fd_ >= 0 && operation_ == Idle) {
-            operation_ = MqttConfiguring;
-            sendCommand(QByteArrayLiteral("AT+MQTTUSERCFG=0,1,\"\",\"\",\"\",0,0\r\n"), 3000);
-        }
-    });
     return true;
 }
 
@@ -120,7 +114,7 @@ void Esp8266Controller::connectNetwork(const QString &ssid, const QString &passw
 
 void Esp8266Controller::publishTelemetry(const SensorSnapshot &snapshot)
 {
-    if (!mqttReady_ || operation_ != Idle || fd_ < 0) return;
+    if (operation_ != Idle || fd_ < 0) return;
     const QJsonObject object{{QStringLiteral("protocol_version"), 1},
                              {QStringLiteral("device_id"), mqttDeviceId_},
                              {QStringLiteral("timestamp"), snapshot.timestamp.toUTC().toString(Qt::ISODate)},
@@ -129,12 +123,13 @@ void Esp8266Controller::publishTelemetry(const SensorSnapshot &snapshot)
                              {QStringLiteral("humidity_percent"), snapshot.humidity},
                              {QStringLiteral("illuminance_lux"), snapshot.illuminance},
                              {QStringLiteral("collision_warning"), snapshot.collisionWarning}};
-    QString payload = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)).trimmed();
-    payload.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
-    payload.replace(QStringLiteral("\""), QStringLiteral("\\\""));
-    const QString topic = QStringLiteral("gateway/%1/telemetry").arg(mqttDeviceId_);
-    const QString command = QStringLiteral("AT+MQTTPUB=0,\"%1\",\"%2\",0,0\r\n").arg(topic, payload);
-    sendCommand(command.toUtf8(), 3000);
+    const QByteArray body = QJsonDocument(object).toJson(QJsonDocument::Compact).trimmed();
+    telemetryRequest_ = QByteArrayLiteral("POST /api/v1/telemetry HTTP/1.1\r\nHost: ")
+        + mqttHost_.toUtf8() + QByteArrayLiteral("\r\nContent-Type: application/json\r\nContent-Length: ")
+        + QByteArray::number(body.size()) + QByteArrayLiteral("\r\nConnection: close\r\n\r\n") + body;
+    operation_ = HttpConnecting;
+    const QString command = QStringLiteral("AT+CIPSTART=\"TCP\",\"%1\",%2\r\n").arg(mqttHost_).arg(mqttPort_);
+    sendCommand(command.toUtf8(), 10000);
 }
 
 void Esp8266Controller::startOta(const QString &host, quint16 port, const QString &manifestPath)
@@ -303,17 +298,6 @@ void Esp8266Controller::processLine(const QByteArray &line)
         sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000);
         return;
     }
-    if (operation_ == MqttConfiguring && text == QStringLiteral("OK")) {
-        operation_ = MqttConnecting;
-        const QString command = QStringLiteral("AT+MQTTCONN=0,\"%1\",%2,1\r\n").arg(mqttHost_).arg(mqttPort_);
-        sendCommand(command.toUtf8(), 10000);
-        return;
-    }
-    if (operation_ == MqttConnecting && text == QStringLiteral("OK")) {
-        timeoutTimer_->stop(); operation_ = Idle; mqttReady_ = true;
-        emit connectionStateChanged(true, QStringLiteral("MQTT 已连接 %1:%2").arg(mqttHost_).arg(mqttPort_));
-        return;
-    }
     if (operation_ == OtaSettingMode && (text == QStringLiteral("OK") || text == QStringLiteral("ERROR"))) {
         operation_ = OtaClosing;
         sendCommand(QByteArrayLiteral("AT+CIPCLOSE\r\n"), 2000);
@@ -342,6 +326,10 @@ void Esp8266Controller::processLine(const QByteArray &line)
 
 void Esp8266Controller::timeout()
 {
+    if (operation_ == HttpConnecting || operation_ == HttpWaitingPrompt || operation_ == HttpSending) {
+        operation_ = Idle;
+        return;
+    }
     if (operation_ == QueryingStatus) {
         operation_ = Idle;
         emit connectionStateChanged(false, QStringLiteral("WiFi 状态查询超时"));
