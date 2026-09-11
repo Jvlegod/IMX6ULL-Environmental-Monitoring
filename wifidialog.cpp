@@ -116,7 +116,6 @@ WifiDialog::WifiDialog(QWidget *parent)
     auto *keyboardLayout = new QGridLayout(keyboardPanel_);
     auto *keyboardTitle = new QLabel(QStringLiteral("触摸键盘"));
     auto *collapseKeyboard = new QPushButton(QStringLiteral("收起键盘"));
-    collapseKeyboard->setProperty("touchDebounce", false);
     connect(collapseKeyboard, &QPushButton::clicked, this, &WifiDialog::hideKeyboard);
     keyboardLayout->addWidget(keyboardTitle, 0, 0, 1, 8);
     keyboardLayout->addWidget(collapseKeyboard, 0, 8, 1, 2);
@@ -127,7 +126,6 @@ WifiDialog::WifiDialog(QWidget *parent)
     for (int i = 0; i < keys.size(); ++i) {
         auto *key = new QPushButton(keys.at(i));
         key->setMinimumHeight(28);
-        key->setProperty("touchDebounce", false);
         connect(key, &QPushButton::clicked, this, [this, key] {
             if (keyboardEdit_) keyboardEdit_->insert(key->text());
         });
@@ -139,7 +137,6 @@ WifiDialog::WifiDialog(QWidget *parent)
     auto *done = new QPushButton(QStringLiteral("完成"));
     for (auto *button : {backspace, space, clear, done}) {
         button->setMinimumHeight(28);
-        button->setProperty("touchDebounce", false);
     }
     connect(backspace, &QPushButton::clicked, this, [this] {
         if (keyboardEdit_) keyboardEdit_->backspace();
