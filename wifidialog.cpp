@@ -337,6 +337,11 @@ void WifiDialog::showError(const QString &message)
     setBusy(false);
 }
 
+void WifiDialog::publishTelemetry(const SensorSnapshot &snapshot)
+{
+    controller_.publishTelemetry(snapshot);
+}
+
 void WifiDialog::startOta()
 {
     bool ok = false;

@@ -495,6 +495,7 @@ void MainWindow::showWifiDialog()
 {
     if (!wifiDialog_) {
         wifiDialog_ = new WifiDialog(this);
+        connect(provider_, &ISensorProvider::snapshotReady, wifiDialog_, &WifiDialog::publishTelemetry);
         connect(wifiDialog_, &WifiDialog::wifiStateChanged, this, [this](bool connected, const QString &detail) {
             updateDeviceStatus(QStringLiteral("串口 WiFi"), connected, detail);
             wifiStatusIcon_->setEnabled(connected);

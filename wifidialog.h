@@ -23,6 +23,7 @@ class WifiDialog final : public QDialog
 public:
     explicit WifiDialog(QWidget *parent = nullptr);
     ~WifiDialog() override;
+    void publishTelemetry(const SensorSnapshot &snapshot);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

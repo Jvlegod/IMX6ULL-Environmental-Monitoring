@@ -25,7 +25,7 @@ speed_t serialSpeed(int baud)
 Esp8266Controller::Esp8266Controller(QObject *parent)
     : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)), statusTimer_(new QTimer(this)),
       operation_(Idle), simulated_(false), otaPromptHandled_(false), otaHeadersParsed_(false),
-      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false)
+      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001"))
 {
     timeoutTimer_->setSingleShot(true);
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
@@ -61,9 +61,20 @@ bool Esp8266Controller::openPort(const QString &path, int baudRate)
     tcflush(fd_, TCIOFLUSH);
     notifier_ = new QSocketNotifier(fd_, QSocketNotifier::Read, this);
     connect(notifier_, &QSocketNotifier::activated, this, &Esp8266Controller::readAvailable);
+    mqttHost_ = qEnvironmentVariable("ENVIRONMENT_MONITOR_MQTT_HOST", QStringLiteral("192.168.1.100"));
+    mqttPort_ = static_cast<quint16>(qEnvironmentVariableIntValue("ENVIRONMENT_MONITOR_MQTT_PORT"));
+    if (mqttPort_ == 0) mqttPort_ = 1883;
+    mqttDeviceId_ = qEnvironmentVariable("ENVIRONMENT_MONITOR_DEVICE_ID", QStringLiteral("gateway-001"));
+    mqttReady_ = false;
     emit portStateChanged(true, QStringLiteral("%1 · %2 8N1").arg(path).arg(baudRate));
     statusTimer_->start();
     QTimer::singleShot(200, this, &Esp8266Controller::pollWifiStatus);
+    QTimer::singleShot(500, this, [this] {
+        if (fd_ >= 0 && operation_ == Idle) {
+            operation_ = MqttConfiguring;
+            sendCommand(QByteArrayLiteral("AT+MQTTUSERCFG=0,1,\"\",\"\",\"\",0,0\r\n"), 3000);
+        }
+    });
     return true;
 }
 
@@ -73,7 +84,7 @@ void Esp8266Controller::closePort()
     timeoutTimer_->stop(); statusTimer_->stop(); delete notifier_; notifier_ = nullptr;
     if (otaFile_) { otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
     if (fd_ >= 0) ::close(fd_);
-    fd_ = -1; simulated_ = false; operation_ = Idle; receiveBuffer_.clear();
+    fd_ = -1; simulated_ = false; operation_ = Idle; receiveBuffer_.clear(); mqttReady_ = false;
     if (wasOpen) emit portStateChanged(false, QStringLiteral("ESP8266 串口已关闭"));
 }
 
@@ -105,6 +116,25 @@ void Esp8266Controller::connectNetwork(const QString &ssid, const QString &passw
     operation_ = Connecting;
     const QString command = QStringLiteral("AT+CWJAP=\"%1\",\"%2\"\r\n").arg(escapeArgument(ssid), escapeArgument(password));
     sendCommand(command.toUtf8(), 25000);
+}
+
+void Esp8266Controller::publishTelemetry(const SensorSnapshot &snapshot)
+{
+    if (!mqttReady_ || operation_ != Idle || fd_ < 0) return;
+    const QJsonObject object{{QStringLiteral("protocol_version"), 1},
+                             {QStringLiteral("device_id"), mqttDeviceId_},
+                             {QStringLiteral("timestamp"), snapshot.timestamp.toUTC().toString(Qt::ISODate)},
+                             {QStringLiteral("temperature_c"), snapshot.temperature},
+                             {QStringLiteral("pressure_kpa"), snapshot.pressure},
+                             {QStringLiteral("humidity_percent"), snapshot.humidity},
+                             {QStringLiteral("illuminance_lux"), snapshot.illuminance},
+                             {QStringLiteral("collision_warning"), snapshot.collisionWarning}};
+    QString payload = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+    payload.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
+    payload.replace(QStringLiteral("\""), QStringLiteral("\\\""));
+    const QString topic = QStringLiteral("gateway/%1/telemetry").arg(mqttDeviceId_);
+    const QString command = QStringLiteral("AT+MQTTPUB=0,\"%1\",\"%2\",0,0\r\n").arg(topic, payload);
+    sendCommand(command.toUtf8(), 3000);
 }
 
 void Esp8266Controller::startOta(const QString &host, quint16 port, const QString &manifestPath)
@@ -271,6 +301,17 @@ void Esp8266Controller::processLine(const QByteArray &line)
     if (text == QStringLiteral("ERROR") && operation_ == WaitingForScanMode) {
         operation_ = Scanning;
         sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000);
+        return;
+    }
+    if (operation_ == MqttConfiguring && text == QStringLiteral("OK")) {
+        operation_ = MqttConnecting;
+        const QString command = QStringLiteral("AT+MQTTCONN=0,\"%1\",%2,1\r\n").arg(mqttHost_).arg(mqttPort_);
+        sendCommand(command.toUtf8(), 10000);
+        return;
+    }
+    if (operation_ == MqttConnecting && text == QStringLiteral("OK")) {
+        timeoutTimer_->stop(); operation_ = Idle; mqttReady_ = true;
+        emit connectionStateChanged(true, QStringLiteral("MQTT 已连接 %1:%2").arg(mqttHost_).arg(mqttPort_));
         return;
     }
     if (operation_ == OtaSettingMode && (text == QStringLiteral("OK") || text == QStringLiteral("ERROR"))) {

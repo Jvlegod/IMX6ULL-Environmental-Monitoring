@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QVector>
+#include "sensorprovider.h"
 
 class QSocketNotifier;
 class QTimer;
@@ -29,6 +30,7 @@ public:
     void scanNetworks();
     void connectNetwork(const QString &ssid, const QString &password);
     void startOta(const QString &host, quint16 port, const QString &manifestPath);
+    void publishTelemetry(const SensorSnapshot &snapshot);
 
 signals:
     void portStateChanged(bool open, const QString &detail);
@@ -44,7 +46,7 @@ private slots:
     void pollWifiStatus();
 
 private:
-    enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp, QueryingStatus,
+    enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp, QueryingStatus, MqttConfiguring, MqttConnecting,
                      OtaSettingMode, OtaClosing, OtaConnecting, OtaWaitingPrompt, OtaReceiving };
     void sendCommand(const QByteArray &command, int timeoutMs);
     void sendOtaRequest();
@@ -82,6 +84,10 @@ private:
     QByteArray otaRequest_;
     class QFile *otaFile_;
     bool otaDownloadingFile_;
+    bool mqttReady_;
+    QString mqttHost_;
+    quint16 mqttPort_;
+    QString mqttDeviceId_;
 };
 
 Q_DECLARE_METATYPE(WifiNetwork)
