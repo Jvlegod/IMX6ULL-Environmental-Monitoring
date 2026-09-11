@@ -19,7 +19,8 @@ public:
         auto *button = qobject_cast<QAbstractButton *>(watched);
         if (!button
             || (event->type() != QEvent::MouseButtonPress
-                && event->type() != QEvent::MouseButtonRelease))
+                && event->type() != QEvent::MouseButtonRelease
+                && event->type() != QEvent::MouseButtonDblClick))
             return QObject::eventFilter(watched, event);
         if (button->property("touchDebounce").isValid()
             && !button->property("touchDebounce").toBool())
@@ -27,19 +28,31 @@ public:
         if (!timer_.isValid()) timer_.start();
         const qint64 now = timer_.elapsed();
 
+        if (event->type() == QEvent::MouseButtonDblClick) {
+            suppressed_.insert(button);
+            event->accept();
+            return true;
+        }
+
         if (event->type() == QEvent::MouseButtonPress) {
             const qint64 last = lastPress_.value(button, -1000);
-            if (now - last < 500) {
+            if (pressed_.contains(button) || now - last < 500) {
                 suppressed_.insert(button);
                 event->accept();
                 return true;
             }
             lastPress_.insert(button, now);
+            pressed_.insert(button);
             suppressed_.remove(button);
             return QObject::eventFilter(watched, event);
         }
 
         if (suppressed_.remove(button)) {
+            pressed_.remove(button);
+            event->accept();
+            return true;
+        }
+        if (!pressed_.remove(button)) {
             event->accept();
             return true;
         }
@@ -49,6 +62,7 @@ public:
 private:
     QElapsedTimer timer_;
     QHash<QAbstractButton *, qint64> lastPress_;
+    QSet<QAbstractButton *> pressed_;
     QSet<QAbstractButton *> suppressed_;
 };
 
