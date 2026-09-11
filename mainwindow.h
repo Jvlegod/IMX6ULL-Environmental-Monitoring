@@ -52,6 +52,7 @@ private:
     QPushButton *thresholdButton_;
     QComboBox *samplingIntervalCombo_;
     QLabel *lastUpdateLabel_;
+    QLabel *wifiStatusIcon_;
     QLabel *alertLabel_;
     QLabel *temperatureValue_;
     QLabel *temperatureUnit_;

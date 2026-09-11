@@ -32,6 +32,8 @@
 #include <QGridLayout>
 #include <QFrame>
 #include <QStatusBar>
+#include <QStyle>
+#include <QIcon>
 
 
 namespace {
@@ -49,7 +51,7 @@ int sensorFlagForDevice(const QString &device)
 MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     : QMainWindow(parent), provider_(provider), samplingButton_(nullptr),
       acquisitionButton_(nullptr), thresholdButton_(nullptr), samplingIntervalCombo_(nullptr),
-      lastUpdateLabel_(nullptr), alertLabel_(nullptr), temperatureValue_(nullptr),
+      lastUpdateLabel_(nullptr), wifiStatusIcon_(nullptr), alertLabel_(nullptr), temperatureValue_(nullptr),
       temperatureUnit_(nullptr), humidityValue_(nullptr), humidityUnit_(nullptr),
       pressureValue_(nullptr), pressureUnit_(nullptr), illuminanceValue_(nullptr),
       illuminanceUnit_(nullptr), statusTable_(nullptr), chartView_(nullptr), wifiDialog_(nullptr),
@@ -83,6 +85,13 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     lastUpdateLabel_ = new QLabel(QStringLiteral("等待数据"));
     lastUpdateLabel_->setObjectName(QStringLiteral("lastUpdate"));
     header->addWidget(lastUpdateLabel_, 0, Qt::AlignVCenter);
+    wifiStatusIcon_ = new QLabel;
+    QIcon wifiIcon = QIcon::fromTheme(QStringLiteral("network-wireless"));
+    if (wifiIcon.isNull()) wifiIcon = style()->standardIcon(QStyle::SP_DriveNetIcon);
+    wifiStatusIcon_->setPixmap(wifiIcon.pixmap(24, 24));
+    wifiStatusIcon_->setEnabled(false);
+    wifiStatusIcon_->setToolTip(QStringLiteral("WiFi 未连接"));
+    header->addWidget(wifiStatusIcon_, 0, Qt::AlignVCenter);
     samplingButton_ = new QPushButton(QStringLiteral("暂停采集"));
     samplingButton_->setObjectName(QStringLiteral("samplingButton"));
     samplingButton_->setMinimumWidth(120);
@@ -488,6 +497,9 @@ void MainWindow::showWifiDialog()
         wifiDialog_ = new WifiDialog(this);
         connect(wifiDialog_, &WifiDialog::wifiStateChanged, this, [this](bool connected, const QString &detail) {
             updateDeviceStatus(QStringLiteral("串口 WiFi"), connected, detail);
+            wifiStatusIcon_->setEnabled(connected);
+            wifiStatusIcon_->setToolTip(connected ? QStringLiteral("WiFi 已连接")
+                                                   : QStringLiteral("WiFi 未连接: %1").arg(detail));
         });
     }
     wifiDialog_->show();
