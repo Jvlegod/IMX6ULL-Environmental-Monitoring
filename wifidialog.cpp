@@ -237,10 +237,10 @@ bool WifiDialog::eventFilter(QObject *watched, QEvent *event)
         auto *widget = qobject_cast<QWidget *>(watched);
         const bool isDialogWidget = widget && (widget == this || isAncestorOf(widget));
         const bool isKeyboardWidget = widget && (widget == keyboardPanel_ || keyboardPanel_->isAncestorOf(widget));
-        if (isDialogWidget && !isKeyboardWidget) {
-            const bool isLineEdit = qobject_cast<QLineEdit *>(watched);
+        if (isDialogWidget && !isKeyboardWidget
+            && !qobject_cast<QLineEdit *>(watched)) {
             hideKeyboard();
-            if (!isLineEdit) return true;
+            return true;
         }
     }
     if (event->type() == QEvent::MouseButtonPress) {
@@ -271,6 +271,7 @@ void WifiDialog::keyPressEvent(QKeyEvent *event)
 
 void WifiDialog::showKeyboard(QLineEdit *edit)
 {
+    if (keyboardEdit_ == edit && keyboardPanel_->isVisible()) return;
     keyboardEdit_ = edit;
     keyboardPanel_->setVisible(true);
     edit->setFocus();
