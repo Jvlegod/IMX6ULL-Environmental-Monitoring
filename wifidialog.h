@@ -33,6 +33,7 @@ protected:
 
 signals:
     void wifiStateChanged(bool connected, const QString &detail);
+    void otaStatusChanged(int progress, const QString &detail);
 
 private slots:
     void scanNetworks();

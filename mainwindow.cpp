@@ -16,6 +16,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QLineEdit>
 #include <QScreen>
 #include <QSettings>
@@ -51,7 +52,7 @@ int sensorFlagForDevice(const QString &device)
 MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     : QMainWindow(parent), provider_(provider), samplingButton_(nullptr),
       acquisitionButton_(nullptr), thresholdButton_(nullptr), samplingIntervalCombo_(nullptr),
-      lastUpdateLabel_(nullptr), wifiStatusIcon_(nullptr), alertLabel_(nullptr), temperatureValue_(nullptr),
+      lastUpdateLabel_(nullptr), wifiStatusIcon_(nullptr), alertLabel_(nullptr), otaProgressBar_(nullptr), temperatureValue_(nullptr),
       temperatureUnit_(nullptr), humidityValue_(nullptr), humidityUnit_(nullptr),
       pressureValue_(nullptr), pressureUnit_(nullptr), illuminanceValue_(nullptr),
       illuminanceUnit_(nullptr), statusTable_(nullptr), chartView_(nullptr), wifiDialog_(nullptr),
@@ -170,6 +171,12 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     alertLabel_ = new QLabel(QStringLiteral("状态正常 · 当前未发现超限数据"));
     alertLabel_->setObjectName(QStringLiteral("alert"));
     root->addWidget(alertLabel_);
+    otaProgressBar_ = new QProgressBar;
+    otaProgressBar_->setRange(0, 100);
+    otaProgressBar_->setValue(0);
+    otaProgressBar_->setFormat(QStringLiteral("OTA 未进行"));
+    otaProgressBar_->setVisible(false);
+    root->addWidget(otaProgressBar_);
     setCentralWidget(central);
     statusBar()->showMessage(QStringLiteral("采集模式"));
 
@@ -192,6 +199,12 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
         wifiStatusIcon_->setEnabled(connected);
         wifiStatusIcon_->setToolTip(connected ? QStringLiteral("WiFi 已连接")
                                                : QStringLiteral("WiFi 未连接: %1").arg(detail));
+    });
+    connect(wifiDialog_, &WifiDialog::otaStatusChanged, this, [this](int progress, const QString &detail) {
+        otaProgressBar_->setVisible(true);
+        otaProgressBar_->setValue(progress);
+        otaProgressBar_->setFormat(QStringLiteral("%1% · %2").arg(progress).arg(detail));
+        if (progress >= 100) QTimer::singleShot(2500, otaProgressBar_, &QProgressBar::hide);
     });
 }
 

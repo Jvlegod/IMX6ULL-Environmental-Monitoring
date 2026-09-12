@@ -14,6 +14,7 @@ class QPushButton;
 class QTableWidget;
 class QTableWidgetItem;
 class QTimer;
+class QProgressBar;
 QT_END_NAMESPACE
 class TrendChart;
 class WifiDialog;
@@ -54,6 +55,7 @@ private:
     QLabel *lastUpdateLabel_;
     QLabel *wifiStatusIcon_;
     QLabel *alertLabel_;
+    QProgressBar *otaProgressBar_;
     QLabel *temperatureValue_;
     QLabel *temperatureUnit_;
     QLabel *humidityValue_;

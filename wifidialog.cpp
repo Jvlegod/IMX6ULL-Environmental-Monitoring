@@ -359,6 +359,7 @@ void WifiDialog::showOtaProgress(qint64 received, qint64 total)
     const int percent = total > 0 ? static_cast<int>((received * 100) / total) : 0;
     otaProgress_->setValue(qBound(0, percent, 100));
     statusLabel_->setText(QStringLiteral("OTA 下载中: %1 / %2 字节").arg(received).arg(total));
+    emit otaStatusChanged(otaProgress_->value(), statusLabel_->text());
 }
 
 void WifiDialog::applyOtaPackage(const QString &version, const QString &path)
@@ -370,6 +371,7 @@ void WifiDialog::applyOtaPackage(const QString &version, const QString &path)
         showError(QStringLiteral("无法启动 OTA 替换脚本")); return;
     }
     statusLabel_->setText(QStringLiteral("已校验版本 %1, 正在替换并重启应用").arg(version));
+    emit otaStatusChanged(100, statusLabel_->text());
     otaButton_->setEnabled(false);
     QTimer::singleShot(500, qApp, &QCoreApplication::quit);
 }
