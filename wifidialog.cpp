@@ -182,8 +182,7 @@ WifiDialog::WifiDialog(QWidget *parent)
             showError(QStringLiteral("未找到可用 UART, 请确认 UART4 对应的 /dev/ttymxc3 已启用"));
             return;
         }
-        if (controller_.openPort(port, 115200))
-            QTimer::singleShot(100, this, &WifiDialog::scanNetworks);
+        controller_.openPort(port, 115200);
     });
 }
 
