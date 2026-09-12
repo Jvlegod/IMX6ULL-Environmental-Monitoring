@@ -326,6 +326,10 @@ void Esp8266Controller::processLine(const QByteArray &line)
         emit connectionStateChanged(connected, connected ? text : QStringLiteral("WiFi 未连接"));
     }
     else if (operation_ == QueryingStatus && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
+    else if (operation_ == HttpConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) {
+        operation_ = HttpWaitingPrompt;
+        sendCommand(QStringLiteral("AT+CIPSEND=%1\r\n").arg(telemetryRequest_.size()).toUtf8(), 5000);
+    }
     else if (operation_ == OtaConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) { if (!otaPromptHandled_) sendOtaRequest(); }
     else if (operation_ == OtaWaitingPrompt && text == QStringLiteral(">")) { if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); } }
     else if (text == QStringLiteral("WIFI DISCONNECT")) emit connectionStateChanged(false, QStringLiteral("WiFi 已断开"));
