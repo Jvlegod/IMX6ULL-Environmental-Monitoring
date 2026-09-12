@@ -25,7 +25,7 @@ speed_t serialSpeed(int baud)
 Esp8266Controller::Esp8266Controller(QObject *parent)
     : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)), statusTimer_(new QTimer(this)), commandTimer_(new QTimer(this)),
       operation_(Idle), simulated_(false), otaPromptHandled_(false), otaHeadersParsed_(false),
-      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001")), commandPolling_(false)
+      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001")), commandPolling_(false), otaLastLoggedBytes_(0)
 {
     timeoutTimer_->setSingleShot(true);
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
@@ -153,6 +153,11 @@ void Esp8266Controller::startOta(const QString &host, quint16 port, const QStrin
     otaHost_ = host.trimmed(); otaPort_ = port ? port : 80; otaManifestPath_ = manifestPath.trimmed();
     otaVersion_.clear(); otaFilePath_.clear(); otaFileSha256_.clear(); otaHttpBody_.clear(); otaHttpHeaders_.clear();
     otaExpectedBytes_ = 0; otaExpectedFileBytes_ = 0; otaReceivedBytes_ = 0; otaDownloadingFile_ = false;
+    otaLastLoggedBytes_ = 0;
+    QFile progressLog(QStringLiteral("/tmp/environment_monitor_ota_progress.log"));
+    if (progressLog.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        progressLog.write("OTA started\n");
+    }
     if (simulated_) {
         QTimer::singleShot(300, this, [this] { emit otaProgress(1, 1); emit otaPackageReady(QStringLiteral("0.2.0"), QStringLiteral("/tmp/environment_monitor.new")); });
         return;
@@ -286,6 +291,14 @@ void Esp8266Controller::processHttpData(const QByteArray &data)
     } else otaHttpBody_.append(data);
     otaReceivedBytes_ += data.size();
     emit otaProgress(otaReceivedBytes_, otaExpectedBytes_);
+    const qint64 logStep = qMax<qint64>(1, otaExpectedBytes_ / 20);
+    if (otaReceivedBytes_ >= otaLastLoggedBytes_ + logStep || otaReceivedBytes_ >= otaExpectedBytes_) {
+        QFile progressLog(QStringLiteral("/tmp/environment_monitor_ota_progress.log"));
+        if (progressLog.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+            progressLog.write(QStringLiteral("received=%1 expected=%2\n").arg(otaReceivedBytes_).arg(otaExpectedBytes_).toUtf8());
+        }
+        otaLastLoggedBytes_ = otaReceivedBytes_;
+    }
     if (otaReceivedBytes_ >= otaExpectedBytes_) finishHttpResponse();
 }
 

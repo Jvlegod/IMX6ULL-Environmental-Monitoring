@@ -94,6 +94,7 @@ private:
     QByteArray commandRequest_;
     QByteArray commandResponse_;
     bool commandPolling_;
+    qint64 otaLastLoggedBytes_;
 };
 
 Q_DECLARE_METATYPE(WifiNetwork)
