@@ -96,6 +96,7 @@ void Esp8266Controller::pollWifiStatus()
 void Esp8266Controller::scanNetworks()
 {
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
+    if (operation_ == QueryingStatus) { timeoutTimer_->stop(); operation_ = Idle; }
     if (operation_ != Idle) { emit operationFailed(QStringLiteral("ESP8266 当前正在执行其他操作")); return; }
     networks_.clear();
     if (simulated_) { operation_ = Scanning; QTimer::singleShot(500, this, [this] { networks_ = {{QStringLiteral("Office-WiFi"), -38, 3}, {QStringLiteral("Lab-2.4G"), -56, 3}, {QStringLiteral("Guest"), -72, 0}}; operation_ = Idle; emit scanFinished(networks_); }); return; }
@@ -105,6 +106,7 @@ void Esp8266Controller::scanNetworks()
 void Esp8266Controller::connectNetwork(const QString &ssid, const QString &password)
 {
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
+    if (operation_ == QueryingStatus) { timeoutTimer_->stop(); operation_ = Idle; }
     if (operation_ != Idle) { emit operationFailed(QStringLiteral("ESP8266 当前正在执行其他操作")); return; }
     if (simulated_) { operation_ = Connecting; QTimer::singleShot(900, this, [this, ssid] { operation_ = Idle; emit connectionStateChanged(true, QStringLiteral("已连接 %1 · 192.168.1.108").arg(ssid)); }); return; }
     operation_ = Connecting;
@@ -136,6 +138,7 @@ void Esp8266Controller::startOta(const QString &host, quint16 port, const QStrin
 {
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开 ESP8266 串口")); return; }
     if (host.trimmed().isEmpty() || manifestPath.trimmed().isEmpty()) { emit operationFailed(QStringLiteral("OTA 服务器地址和 manifest 路径不能为空")); return; }
+    if (operation_ == QueryingStatus) { timeoutTimer_->stop(); operation_ = Idle; }
     if (operation_ != Idle) { emit operationFailed(QStringLiteral("ESP8266 当前正在执行其他操作")); return; }
     otaHost_ = host.trimmed(); otaPort_ = port ? port : 80; otaManifestPath_ = manifestPath.trimmed();
     otaVersion_.clear(); otaFilePath_.clear(); otaFileSha256_.clear(); otaHttpBody_.clear(); otaHttpHeaders_.clear();
