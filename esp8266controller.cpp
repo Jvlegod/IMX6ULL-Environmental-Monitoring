@@ -90,7 +90,7 @@ void Esp8266Controller::pollWifiStatus()
     if (!isOpen() || operation_ != Idle) return;
     if (simulated_) { emit connectionStateChanged(true, QStringLiteral("模拟 WiFi 已连接")); return; }
     operation_ = QueryingStatus;
-    sendCommand(QByteArrayLiteral("AT+CIPSTATUS\r\n"), 3000);
+    sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000);
 }
 
 void Esp8266Controller::scanNetworks()
@@ -324,17 +324,6 @@ void Esp8266Controller::processLine(const QByteArray &line)
         timeoutTimer_->stop(); operation_ = Idle;
         const bool connected = !text.contains(QStringLiteral("\"0.0.0.0\""));
         emit connectionStateChanged(connected, connected ? text : QStringLiteral("WiFi 未连接"));
-    }
-    else if (operation_ == QueryingStatus && text.startsWith(QStringLiteral("STATUS:"))) {
-        const int status = text.mid(QStringLiteral("STATUS:").size()).trimmed().toInt();
-        if (status >= 0 && status <= 5) {
-            timeoutTimer_->stop();
-            operation_ = Idle;
-            const bool connected = status == 3;
-            const QString detail = connected ? QStringLiteral("ESP8266 TCP 已连接")
-                                              : QStringLiteral("ESP8266 WiFi 未连接, STATUS:%1").arg(status);
-            emit connectionStateChanged(connected, detail);
-        }
     }
     else if (operation_ == QueryingStatus && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
     else if (operation_ == HttpConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) {
