@@ -29,9 +29,9 @@ Esp8266Controller::Esp8266Controller(QObject *parent)
 {
     timeoutTimer_->setSingleShot(true);
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
-    statusTimer_->setInterval(5000);
+    statusTimer_->setInterval(15000);
     connect(statusTimer_, &QTimer::timeout, this, &Esp8266Controller::pollWifiStatus);
-    commandTimer_->setInterval(3000);
+    commandTimer_->setInterval(1000);
     connect(commandTimer_, &QTimer::timeout, this, &Esp8266Controller::pollRemoteCommand);
 }
 
@@ -435,6 +435,7 @@ void Esp8266Controller::processLine(const QByteArray &line)
 void Esp8266Controller::timeout()
 {
     if (operation_ == HttpConnecting || operation_ == HttpWaitingPrompt || operation_ == HttpSending) {
+        writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n"));
         operation_ = Idle;
         return;
     }
