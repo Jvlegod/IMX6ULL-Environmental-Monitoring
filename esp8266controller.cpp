@@ -387,6 +387,7 @@ void Esp8266Controller::timeout()
 void Esp8266Controller::finishWithError(const QString &message)
 {
     timeoutTimer_->stop();
+    commandPolling_ = false;
     if (otaFile_) { otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
     if (otaDownloadingFile_) QFile::remove(QStringLiteral("/tmp/environment_monitor.new"));
     operation_ = Idle; emit operationFailed(message);
