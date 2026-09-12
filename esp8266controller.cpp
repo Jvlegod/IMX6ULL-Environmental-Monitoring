@@ -31,7 +31,7 @@ Esp8266Controller::Esp8266Controller(QObject *parent)
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
     statusTimer_->setInterval(5000);
     connect(statusTimer_, &QTimer::timeout, this, &Esp8266Controller::pollWifiStatus);
-    commandTimer_->setInterval(10000);
+    commandTimer_->setInterval(3000);
     connect(commandTimer_, &QTimer::timeout, this, &Esp8266Controller::pollRemoteCommand);
 }
 
@@ -72,6 +72,7 @@ bool Esp8266Controller::openPort(const QString &path, int baudRate)
     statusTimer_->start();
     commandTimer_->start();
     QTimer::singleShot(200, this, &Esp8266Controller::pollWifiStatus);
+    QTimer::singleShot(1000, this, &Esp8266Controller::pollRemoteCommand);
     return true;
 }
 
