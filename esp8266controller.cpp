@@ -327,12 +327,13 @@ void Esp8266Controller::processLine(const QByteArray &line)
     }
     else if (operation_ == QueryingStatus && text.startsWith(QStringLiteral("STATUS:"))) {
         const int status = text.mid(QStringLiteral("STATUS:").size()).trimmed().toInt();
-        if (status == 3 || status == 4) {
+        if (status >= 0 && status <= 5) {
             timeoutTimer_->stop();
             operation_ = Idle;
-            emit connectionStateChanged(status == 3,
-                                        status == 3 ? QStringLiteral("ESP8266 TCP 已连接")
-                                                    : QStringLiteral("ESP8266 WiFi 未连接"));
+            const bool connected = status == 3;
+            const QString detail = connected ? QStringLiteral("ESP8266 TCP 已连接")
+                                              : QStringLiteral("ESP8266 WiFi 未连接, STATUS:%1").arg(status);
+            emit connectionStateChanged(connected, detail);
         }
     }
     else if (operation_ == QueryingStatus && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
