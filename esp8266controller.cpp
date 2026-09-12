@@ -213,7 +213,7 @@ void Esp8266Controller::readAvailable()
         if (operation_ == CommandWaitingPrompt && receiveBuffer_.startsWith('>')) {
             receiveBuffer_.remove(0, 1); operation_ = CommandSending; writeSerial(commandRequest_); timeoutTimer_->start(5000); continue;
         }
-        if (operation_ == OtaReceiving && receiveBuffer_.startsWith("+IPD,")) {
+        if ((operation_ == OtaReceiving || operation_ == CommandSending) && receiveBuffer_.startsWith("+IPD,")) {
             const int colon = receiveBuffer_.indexOf(':');
             if (colon < 0) break;
             const QByteArray header = receiveBuffer_.left(colon);
