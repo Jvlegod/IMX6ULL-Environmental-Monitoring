@@ -44,9 +44,10 @@ private slots:
     void readAvailable();
     void timeout();
     void pollWifiStatus();
+    void pollRemoteCommand();
 
 private:
-    enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp, QueryingStatus, HttpConnecting, HttpWaitingPrompt, HttpSending,
+    enum Operation { Idle, WaitingForScanMode, Scanning, Connecting, QueryingIp, QueryingStatus, CommandConnecting, CommandWaitingPrompt, CommandSending, HttpConnecting, HttpWaitingPrompt, HttpSending,
                      OtaSettingMode, OtaClosing, OtaConnecting, OtaWaitingPrompt, OtaReceiving };
     void sendCommand(const QByteArray &command, int timeoutMs);
     void sendOtaRequest();
@@ -64,6 +65,7 @@ private:
     QSocketNotifier *notifier_;
     QTimer *timeoutTimer_;
     QTimer *statusTimer_;
+    QTimer *commandTimer_;
     QByteArray receiveBuffer_;
     QVector<WifiNetwork> networks_;
     Operation operation_;
@@ -89,6 +91,9 @@ private:
     quint16 mqttPort_;
     QString mqttDeviceId_;
     QByteArray telemetryRequest_;
+    QByteArray commandRequest_;
+    QByteArray commandResponse_;
+    bool commandPolling_;
 };
 
 Q_DECLARE_METATYPE(WifiNetwork)

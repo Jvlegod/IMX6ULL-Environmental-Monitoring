@@ -23,14 +23,16 @@ speed_t serialSpeed(int baud)
 }
 
 Esp8266Controller::Esp8266Controller(QObject *parent)
-    : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)), statusTimer_(new QTimer(this)),
+    : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)), statusTimer_(new QTimer(this)), commandTimer_(new QTimer(this)),
       operation_(Idle), simulated_(false), otaPromptHandled_(false), otaHeadersParsed_(false),
-      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001"))
+      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001")), commandPolling_(false)
 {
     timeoutTimer_->setSingleShot(true);
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
     statusTimer_->setInterval(5000);
     connect(statusTimer_, &QTimer::timeout, this, &Esp8266Controller::pollWifiStatus);
+    commandTimer_->setInterval(10000);
+    connect(commandTimer_, &QTimer::timeout, this, &Esp8266Controller::pollRemoteCommand);
 }
 
 Esp8266Controller::~Esp8266Controller() { closePort(); }
@@ -68,6 +70,7 @@ bool Esp8266Controller::openPort(const QString &path, int baudRate)
     mqttReady_ = false;
     emit portStateChanged(true, QStringLiteral("%1 · %2 8N1").arg(path).arg(baudRate));
     statusTimer_->start();
+    commandTimer_->start();
     QTimer::singleShot(200, this, &Esp8266Controller::pollWifiStatus);
     return true;
 }
@@ -75,7 +78,7 @@ bool Esp8266Controller::openPort(const QString &path, int baudRate)
 void Esp8266Controller::closePort()
 {
     const bool wasOpen = isOpen();
-    timeoutTimer_->stop(); statusTimer_->stop(); delete notifier_; notifier_ = nullptr;
+    timeoutTimer_->stop(); statusTimer_->stop(); commandTimer_->stop(); delete notifier_; notifier_ = nullptr;
     if (otaFile_) { otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
     if (fd_ >= 0) ::close(fd_);
     fd_ = -1; simulated_ = false; operation_ = Idle; receiveBuffer_.clear(); mqttReady_ = false;
@@ -83,6 +86,15 @@ void Esp8266Controller::closePort()
 }
 
 bool Esp8266Controller::isOpen() const { return simulated_ || fd_ >= 0; }
+
+void Esp8266Controller::pollRemoteCommand()
+{
+    if (fd_ < 0 || operation_ != Idle) return;
+    commandResponse_.clear(); commandPolling_ = true;
+    commandRequest_ = QStringLiteral("GET /api/v1/devices/%1/commands HTTP/1.1\r\nHost: %2\r\nConnection: close\r\n\r\n").arg(mqttDeviceId_, mqttHost_).toUtf8();
+    operation_ = CommandConnecting;
+    sendCommand(QStringLiteral("AT+CIPSTART=\"TCP\",\"%1\",%2\r\n").arg(mqttHost_).arg(mqttPort_).toUtf8(), 10000);
+}
 
 
 void Esp8266Controller::pollWifiStatus()
@@ -198,6 +210,9 @@ void Esp8266Controller::readAvailable()
             timeoutTimer_->start(5000);
             continue;
         }
+        if (operation_ == CommandWaitingPrompt && receiveBuffer_.startsWith('>')) {
+            receiveBuffer_.remove(0, 1); operation_ = CommandSending; writeSerial(commandRequest_); timeoutTimer_->start(5000); continue;
+        }
         if (operation_ == OtaReceiving && receiveBuffer_.startsWith("+IPD,")) {
             const int colon = receiveBuffer_.indexOf(':');
             if (colon < 0) break;
@@ -221,6 +236,23 @@ void Esp8266Controller::readAvailable()
 
 void Esp8266Controller::processIpdPayload(const QByteArray &payload)
 {
+    if (commandPolling_) {
+        commandResponse_.append(payload);
+        const int separator = commandResponse_.indexOf("\r\n\r\n");
+        if (separator >= 0) {
+            const QByteArray body = commandResponse_.mid(separator + 4);
+            const QJsonDocument doc = QJsonDocument::fromJson(body);
+            if (!doc.isNull()) {
+                commandPolling_ = false; writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n")); timeoutTimer_->stop(); operation_ = Idle;
+                const QJsonObject command = doc.object();
+                if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("ota")) {
+                    const QString manifest = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("manifest_path")).toString();
+                    if (!manifest.isEmpty()) QTimer::singleShot(300, this, [this, manifest] { startOta(mqttHost_, mqttPort_, manifest); });
+                }
+            }
+        }
+        return;
+    }
     processHttpData(payload);
 }
 
@@ -329,6 +361,10 @@ void Esp8266Controller::processLine(const QByteArray &line)
     else if (operation_ == HttpConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) {
         operation_ = HttpWaitingPrompt;
         sendCommand(QStringLiteral("AT+CIPSEND=%1\r\n").arg(telemetryRequest_.size()).toUtf8(), 5000);
+    }
+    else if (operation_ == CommandConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) {
+        operation_ = CommandWaitingPrompt;
+        sendCommand(QStringLiteral("AT+CIPSEND=%1\r\n").arg(commandRequest_.size()).toUtf8(), 5000);
     }
     else if (operation_ == OtaConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) { if (!otaPromptHandled_) sendOtaRequest(); }
     else if (operation_ == OtaWaitingPrompt && text == QStringLiteral(">")) { if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); } }
