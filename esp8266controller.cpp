@@ -194,7 +194,7 @@ void Esp8266Controller::sendCommand(const QByteArray &command, int timeoutMs)
 void Esp8266Controller::sendOtaRequest()
 {
     const QString path = otaDownloadingFile_ ? otaFilePath_ : otaManifestPath_;
-    otaRequest_ = QStringLiteral("GET %1 HTTP/1.1\r\nHost: %2\r\nConnection: close\r\n\r\n").arg(path, otaHost_).toUtf8();
+    otaRequest_ = QStringLiteral("GET %1 HTTP/1.1\r\nHost: %2\r\nConnection: keep-alive\r\n\r\n").arg(path, otaHost_).toUtf8();
     operation_ = OtaWaitingPrompt;
     sendCommand(QStringLiteral("AT+CIPSEND=%1\r\n").arg(otaRequest_.size()).toUtf8(), 5000);
 }
