@@ -194,6 +194,16 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     wifiDialog_ = new WifiDialog(this);
     wifiDialog_->hide();
     connect(provider_, &ISensorProvider::snapshotReady, wifiDialog_, &WifiDialog::publishTelemetry);
+    connect(wifiDialog_->controller(), &Esp8266Controller::remoteSamplingInterval, this, [this](int seconds) {
+        const int index = samplingIntervalCombo_->findData(seconds);
+        if (index >= 0) samplingIntervalCombo_->setCurrentIndex(index);
+    });
+    connect(wifiDialog_->controller(), &Esp8266Controller::remoteThresholds, this,
+            [this](double tmin, double tmax, double hmin, double hmax, double pmin, double pmax, double lmin, double lmax) {
+        temperatureMinimum_ = tmin; temperatureMaximum_ = tmax; humidityMinimum_ = hmin; humidityMaximum_ = hmax;
+        pressureMinimum_ = pmin; pressureMaximum_ = pmax; illuminanceMinimum_ = lmin; illuminanceMaximum_ = lmax;
+        saveThresholds(); statusBar()->showMessage(QStringLiteral("网页阈值配置已同步"), 3000);
+    });
     connect(wifiDialog_, &WifiDialog::wifiStateChanged, this, [this](bool connected, const QString &detail) {
         updateDeviceStatus(QStringLiteral("串口 WiFi"), connected, detail);
         wifiStatusIcon_->setEnabled(connected);

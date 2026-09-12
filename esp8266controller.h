@@ -39,6 +39,9 @@ signals:
     void operationFailed(const QString &message);
     void otaProgress(qint64 received, qint64 total);
     void otaPackageReady(const QString &version, const QString &path);
+    void remoteSamplingInterval(int seconds);
+    void remoteThresholds(double temperatureMin, double temperatureMax, double humidityMin, double humidityMax,
+                          double pressureMin, double pressureMax, double illuminanceMin, double illuminanceMax);
 
 private slots:
     void readAvailable();

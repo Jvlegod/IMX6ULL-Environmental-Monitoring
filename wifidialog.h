@@ -24,6 +24,7 @@ public:
     explicit WifiDialog(QWidget *parent = nullptr);
     ~WifiDialog() override;
     void publishTelemetry(const SensorSnapshot &snapshot);
+    Esp8266Controller *controller() { return &controller_; }
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

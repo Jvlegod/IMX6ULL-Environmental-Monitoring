@@ -270,6 +270,15 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
                 if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("ota")) {
                     const QString manifest = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("manifest_path")).toString();
                     if (!manifest.isEmpty()) QTimer::singleShot(300, this, [this, manifest] { startOta(mqttHost_, mqttPort_, manifest); });
+                } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_sampling_interval")) {
+                    const int seconds = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("seconds")).toInt();
+                    if (seconds >= 1 && seconds <= 3600) emit remoteSamplingInterval(seconds);
+                } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_thresholds")) {
+                    const QJsonObject p = command.value(QStringLiteral("payload")).toObject();
+                    emit remoteThresholds(p.value("temperature_min").toDouble(), p.value("temperature_max").toDouble(),
+                                          p.value("humidity_min").toDouble(), p.value("humidity_max").toDouble(),
+                                          p.value("pressure_min").toDouble(), p.value("pressure_max").toDouble(),
+                                          p.value("illuminance_min").toDouble(), p.value("illuminance_max").toDouble());
                 }
             }
         }
