@@ -204,9 +204,18 @@ void Esp8266Controller::readAvailable()
     char data[1024]; ssize_t size;
     while ((size = ::read(fd_, data, sizeof(data))) > 0) receiveBuffer_.append(data, static_cast<int>(size));
     while (!receiveBuffer_.isEmpty()) {
+        if ((operation_ == OtaReceiving || operation_ == CommandSending)
+            && !receiveBuffer_.startsWith("+IPD,")) {
+            const int ipd = receiveBuffer_.indexOf("+IPD,");
+            const int newline = receiveBuffer_.indexOf('\n');
+            if (ipd >= 0 && (newline < 0 || ipd < newline)) {
+                receiveBuffer_.remove(0, ipd);
+                continue;
+            }
+        }
         if (operation_ == OtaWaitingPrompt && receiveBuffer_.startsWith('>')) {
             receiveBuffer_.remove(0, 1);
-            if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); }
+            if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(120000); }
             continue;
         }
         if (operation_ == HttpWaitingPrompt && receiveBuffer_.startsWith('>')) {
