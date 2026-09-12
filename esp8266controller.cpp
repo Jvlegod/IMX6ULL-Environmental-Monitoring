@@ -212,6 +212,13 @@ void Esp8266Controller::readAvailable()
                 receiveBuffer_.remove(0, ipd);
                 continue;
             }
+            static const QByteArray marker("+IPD,");
+            int keep = 0;
+            const int maxKeep = qMin(marker.size() - 1, receiveBuffer_.size());
+            for (int length = maxKeep; length > 0; --length) {
+                if (receiveBuffer_.right(length) == marker.left(length)) { keep = length; break; }
+            }
+            if (keep > 0) { receiveBuffer_ = receiveBuffer_.right(keep); break; }
         }
         if (operation_ == OtaWaitingPrompt && receiveBuffer_.startsWith('>')) {
             receiveBuffer_.remove(0, 1);
@@ -370,6 +377,7 @@ void Esp8266Controller::processLine(const QByteArray &line)
         return;
     }
     if (text == QStringLiteral("ERROR") || text == QStringLiteral("FAIL") || text.startsWith(QStringLiteral("+CWJAP:"))) { finishWithError(QStringLiteral("ESP8266 返回: %1").arg(text)); return; }
+    if (text == QStringLiteral("CLOSED") && operation_ == OtaReceiving && otaReceivedBytes_ < otaExpectedBytes_) { finishWithError(QStringLiteral("OTA 连接提前关闭: 已接收 %1/%2 字节").arg(otaReceivedBytes_).arg(otaExpectedBytes_)); return; }
     if (operation_ == WaitingForScanMode && text == QStringLiteral("OK")) { operation_ = Scanning; sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000); }
     else if (operation_ == Scanning && text == QStringLiteral("OK")) { timeoutTimer_->stop(); std::sort(networks_.begin(), networks_.end(), [](const WifiNetwork &a, const WifiNetwork &b) { return a.rssi > b.rssi; }); operation_ = Idle; emit scanFinished(networks_); }
     else if (operation_ == Connecting && text == QStringLiteral("OK")) { operation_ = QueryingIp; sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000); }
