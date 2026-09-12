@@ -367,6 +367,9 @@ void WifiDialog::applyOtaPackage(const QString &version, const QString &path)
     if (path != QStringLiteral("/tmp/environment_monitor.new")) { showError(QStringLiteral("OTA 临时文件路径异常")); return; }
     const QString script = QStringLiteral("/usr/bin/environment_monitor_ota_apply.sh");
     if (!QFileInfo::exists(script)) { showError(QStringLiteral("缺少 OTA 替换脚本: %1").arg(script)); return; }
+    // Stop serial callbacks before the application event loop is torn down.
+    // Otherwise a late notifier event can access OTA state during destruction.
+    controller_.closePort();
     if (!QProcess::startDetached(QStringLiteral("/bin/sh"), QStringList() << script << path << QStringLiteral("/usr/bin/environment_monitor"))) {
         showError(QStringLiteral("无法启动 OTA 替换脚本")); return;
     }
