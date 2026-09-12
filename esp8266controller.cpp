@@ -128,6 +128,7 @@ void Esp8266Controller::connectNetwork(const QString &ssid, const QString &passw
 void Esp8266Controller::publishTelemetry(const SensorSnapshot &snapshot)
 {
     if (operation_ != Idle || fd_ < 0) return;
+    commandResponse_.clear();
     const QJsonObject object{{QStringLiteral("protocol_version"), 1},
                              {QStringLiteral("device_id"), mqttDeviceId_},
                              {QStringLiteral("timestamp"), snapshot.timestamp.toUTC().toString(Qt::ISODate)},
@@ -258,6 +259,16 @@ void Esp8266Controller::readAvailable()
 
 void Esp8266Controller::processIpdPayload(const QByteArray &payload)
 {
+    if (operation_ == HttpSending) {
+        commandResponse_.append(payload);
+        if (commandResponse_.indexOf("\r\n\r\n") >= 0) {
+            timeoutTimer_->stop();
+            writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n"));
+            commandResponse_.clear();
+            operation_ = Idle;
+        }
+        return;
+    }
     if (commandPolling_) {
         commandResponse_.append(payload);
         const int separator = commandResponse_.indexOf("\r\n\r\n");
