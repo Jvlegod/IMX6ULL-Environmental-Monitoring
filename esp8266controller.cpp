@@ -273,10 +273,20 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
         commandResponse_.append(payload);
         const int separator = commandResponse_.indexOf("\r\n\r\n");
         if (separator >= 0) {
-            const QByteArray body = commandResponse_.mid(separator + 4);
+            const QByteArray headers = commandResponse_.left(separator);
+            const QRegularExpression lengthExpression(QStringLiteral("(?im)^Content-Length:\\s*(\\d+)"));
+            const QRegularExpressionMatch lengthMatch = lengthExpression.match(QString::fromLatin1(headers));
+            if (!lengthMatch.hasMatch()) return;
+            const qint64 contentLength = lengthMatch.captured(1).toLongLong();
+            const int bodyStart = separator + 4;
+            if (commandResponse_.size() < bodyStart + contentLength) return;
+            const QByteArray body = commandResponse_.mid(bodyStart, contentLength);
             const QJsonDocument doc = QJsonDocument::fromJson(body);
             if (!doc.isNull()) {
-                commandPolling_ = false; writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n")); timeoutTimer_->stop(); operation_ = Idle;
+                commandPolling_ = false;
+                timeoutTimer_->stop();
+                writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n"));
+                operation_ = Idle;
                 const QJsonObject command = doc.object();
                 if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("ota")) {
                     const QString manifest = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("manifest_path")).toString();
