@@ -405,8 +405,8 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
                 const QString kind = command.value(QStringLiteral("kind")).toString();
                 if (kind != QStringLiteral("ota") && kind != QStringLiteral("system_update")) scheduleNextTask();
             }
-        }
         return;
+        }
     qInfo() << "ESP8266 HTTP payload dispatch" << payload.size() << "bytes operation" << static_cast<int>(operation_);
     processHttpData(payload);
 }
