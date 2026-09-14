@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QVector>
 #include <QJsonObject>
+#include <QQueue>
 #include "sensorprovider.h"
 
 class QSocketNotifier;
@@ -66,6 +67,7 @@ private:
     void beginOtaTcpConnection();
     bool writeSerial(const QByteArray &data);
     void startNextSystemArtifact();
+    void scheduleNextTask();
 
     int fd_;
     QSocketNotifier *notifier_;
@@ -108,6 +110,14 @@ private:
     QVector<QJsonObject> systemUpdateArtifacts_;
     int systemUpdateIndex_;
     QString otaLocalPath_;
+    QQueue<SensorSnapshot> telemetryQueue_;
+    bool commandQueued_;
+    bool statusQueued_;
+    bool wifiConnected_;
+    bool scanQueued_;
+    bool connectQueued_;
+    QString queuedSsid_;
+    QString queuedPassword_;
 };
 
 Q_DECLARE_METATYPE(WifiNetwork)

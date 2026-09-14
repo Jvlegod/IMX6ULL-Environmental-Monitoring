@@ -2,6 +2,7 @@
 
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDebug>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -27,13 +28,13 @@ speed_t serialSpeed(int baud)
 Esp8266Controller::Esp8266Controller(QObject *parent)
     : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)), statusTimer_(new QTimer(this)), commandTimer_(new QTimer(this)),
       operation_(Idle), simulated_(false), otaPromptHandled_(false), otaHeadersParsed_(false),
-      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001")), commandPolling_(false), otaLastLoggedBytes_(0), systemUpdateActive_(false), systemUpdateIndex_(0)
+      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001")), commandPolling_(false), otaLastLoggedBytes_(0), systemUpdateActive_(false), systemUpdateIndex_(0), commandQueued_(false), statusQueued_(false), wifiConnected_(false), scanQueued_(false), connectQueued_(false)
 {
     timeoutTimer_->setSingleShot(true);
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
     statusTimer_->setInterval(15000);
     connect(statusTimer_, &QTimer::timeout, this, &Esp8266Controller::pollWifiStatus);
-    commandTimer_->setInterval(1000);
+    commandTimer_->setInterval(3000);
     connect(commandTimer_, &QTimer::timeout, this, &Esp8266Controller::pollRemoteCommand);
 }
 
@@ -92,8 +93,10 @@ bool Esp8266Controller::isOpen() const { return simulated_ || fd_ >= 0; }
 
 void Esp8266Controller::pollRemoteCommand()
 {
-    if (fd_ < 0 || operation_ != Idle) return;
+    if (fd_ < 0) return;
+    if (operation_ != Idle) { commandQueued_ = true; return; }
     commandResponse_.clear(); commandPolling_ = true;
+    qInfo() << "ESP8266 task: poll commands" << mqttHost_ << mqttPort_;
     commandRequest_ = QStringLiteral("GET /api/v1/devices/%1/commands HTTP/1.1\r\nHost: %2\r\nConnection: close\r\n\r\n").arg(mqttDeviceId_, mqttHost_).toUtf8();
     operation_ = CommandConnecting;
     sendCommand(QStringLiteral("AT+CIPSTART=\"TCP\",\"%1\",%2\r\n").arg(mqttHost_).arg(mqttPort_).toUtf8(), 10000);
@@ -102,8 +105,9 @@ void Esp8266Controller::pollRemoteCommand()
 
 void Esp8266Controller::pollWifiStatus()
 {
-    if (!isOpen() || operation_ != Idle) return;
-    if (simulated_) { emit connectionStateChanged(true, QStringLiteral("模拟 WiFi 已连接")); return; }
+    if (!isOpen()) return;
+    if (operation_ != Idle) { statusQueued_ = true; qInfo() << "ESP8266 task queued: wifi status"; return; }
+    if (simulated_) { wifiConnected_ = true; emit connectionStateChanged(true, QStringLiteral("模拟 WiFi 已连接")); return; }
     operation_ = QueryingStatus;
     sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000);
 }
@@ -111,17 +115,17 @@ void Esp8266Controller::pollWifiStatus()
 void Esp8266Controller::scanNetworks()
 {
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
-    if (operation_ != Idle) { emit operationFailed(QStringLiteral("ESP8266 当前正在执行其他操作")); return; }
+    if (operation_ != Idle) { scanQueued_ = true; return; }
     networks_.clear();
-    if (simulated_) { operation_ = Scanning; QTimer::singleShot(500, this, [this] { networks_ = {{QStringLiteral("Office-WiFi"), -38, 3}, {QStringLiteral("Lab-2.4G"), -56, 3}, {QStringLiteral("Guest"), -72, 0}}; operation_ = Idle; emit scanFinished(networks_); }); return; }
+    if (simulated_) { operation_ = Scanning; QTimer::singleShot(500, this, [this] { networks_ = {{QStringLiteral("Office-WiFi"), -38, 3}, {QStringLiteral("Lab-2.4G"), -56, 3}, {QStringLiteral("Guest"), -72, 0}}; operation_ = Idle; scheduleNextTask(); emit scanFinished(networks_); }); return; }
     operation_ = WaitingForScanMode; sendCommand(QByteArrayLiteral("AT+CWMODE_CUR=1\r\n"), 3000);
 }
 
 void Esp8266Controller::connectNetwork(const QString &ssid, const QString &password)
 {
     if (!isOpen()) { emit operationFailed(QStringLiteral("请先打开串口")); return; }
-    if (operation_ != Idle) { emit operationFailed(QStringLiteral("ESP8266 当前正在执行其他操作")); return; }
-    if (simulated_) { operation_ = Connecting; QTimer::singleShot(900, this, [this, ssid] { operation_ = Idle; emit connectionStateChanged(true, QStringLiteral("已连接 %1 · 192.168.1.108").arg(ssid)); }); return; }
+    if (operation_ != Idle) { connectQueued_ = true; queuedSsid_ = ssid; queuedPassword_ = password; return; }
+    if (simulated_) { operation_ = Connecting; QTimer::singleShot(900, this, [this, ssid] { operation_ = Idle; scheduleNextTask(); emit connectionStateChanged(true, QStringLiteral("已连接 %1 · 192.168.1.108").arg(ssid)); }); return; }
     operation_ = Connecting;
     const QString command = QStringLiteral("AT+CWJAP=\"%1\",\"%2\"\r\n").arg(escapeArgument(ssid), escapeArgument(password));
     sendCommand(command.toUtf8(), 25000);
@@ -129,7 +133,8 @@ void Esp8266Controller::connectNetwork(const QString &ssid, const QString &passw
 
 void Esp8266Controller::publishTelemetry(const SensorSnapshot &snapshot)
 {
-    if (operation_ != Idle || fd_ < 0) return;
+    if (fd_ < 0) return;
+    if (operation_ != Idle) { if (telemetryQueue_.size() >= 2) telemetryQueue_.dequeue(); telemetryQueue_.enqueue(snapshot); qInfo() << "ESP8266 task queued: telemetry"; return; }
     commandResponse_.clear();
     const QJsonObject object{{QStringLiteral("protocol_version"), 1},
                              {QStringLiteral("device_id"), mqttDeviceId_},
@@ -155,6 +160,8 @@ void Esp8266Controller::startNextSystemArtifact()
         emit systemUpdateReady(systemUpdateId_, systemUpdateDir_);
         return;
     }
+    otaHost_ = mqttHost_;
+    otaPort_ = mqttPort_;
     const QJsonObject artifact = systemUpdateArtifacts_.at(systemUpdateIndex_);
     const QString path = artifact.value(QStringLiteral("path")).toString();
     const QString kind = artifact.value(QStringLiteral("kind")).toString();
@@ -176,6 +183,7 @@ void Esp8266Controller::startOta(const QString &host, quint16 port, const QStrin
     otaVersion_.clear(); otaFilePath_.clear(); otaFileSha256_.clear(); otaHttpBody_.clear(); otaHttpHeaders_.clear();
     otaExpectedBytes_ = 0; otaExpectedFileBytes_ = 0; otaReceivedBytes_ = 0; otaDownloadingFile_ = false;
     otaLastLoggedBytes_ = 0;
+    qInfo() << "ESP8266 OTA started:" << otaHost_ << otaPort_ << otaManifestPath_;
     QFile progressLog(QStringLiteral("/tmp/environment_monitor_ota_progress.log"));
     if (progressLog.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         progressLog.write("OTA started\n");
@@ -189,6 +197,7 @@ void Esp8266Controller::startOta(const QString &host, quint16 port, const QStrin
 
 void Esp8266Controller::beginOtaConnection()
 {
+    qInfo() << "ESP8266 OTA: set passive TCP mode";
     operation_ = OtaSettingMode;
     sendCommand(QByteArrayLiteral("AT+CIPMODE=0\r\n"), 3000);
 }
@@ -198,7 +207,8 @@ void Esp8266Controller::beginOtaTcpConnection()
     otaPromptHandled_ = false; otaHeadersParsed_ = false; otaHttpBody_.clear(); otaHttpHeaders_.clear();
     operation_ = OtaConnecting;
     const QByteArray command = QStringLiteral("AT+CIPSTART=\"TCP\",\"%1\",%2\r\n").arg(escapeArgument(otaHost_)).arg(otaPort_).toUtf8();
-    sendCommand(command, 10000);
+    qInfo() << "ESP8266 OTA: connecting" << otaHost_ << otaPort_;
+    sendCommand(command, 15000);
 }
 
 bool Esp8266Controller::writeSerial(const QByteArray &data)
@@ -218,6 +228,7 @@ void Esp8266Controller::sendOtaRequest()
     const QString path = otaDownloadingFile_ ? otaFilePath_ : otaManifestPath_;
     otaRequest_ = QStringLiteral("GET %1 HTTP/1.1\r\nHost: %2\r\nConnection: keep-alive\r\n\r\n").arg(path, otaHost_).toUtf8();
     operation_ = OtaWaitingPrompt;
+    qInfo() << "ESP8266 OTA: sending request" << path << otaRequest_.size() << "bytes";
     sendCommand(QStringLiteral("AT+CIPSEND=%1\r\n").arg(otaRequest_.size()).toUtf8(), 5000);
 }
 
@@ -226,7 +237,7 @@ void Esp8266Controller::readAvailable()
     char data[1024]; ssize_t size;
     while ((size = ::read(fd_, data, sizeof(data))) > 0) receiveBuffer_.append(data, static_cast<int>(size));
     while (!receiveBuffer_.isEmpty()) {
-        if ((operation_ == OtaReceiving || operation_ == CommandSending)
+        if ((operation_ == OtaReceiving || operation_ == CommandSending || operation_ == HttpSending)
             && !receiveBuffer_.startsWith("+IPD,")) {
             const int ipd = receiveBuffer_.indexOf("+IPD,");
             const int newline = receiveBuffer_.indexOf('\n');
@@ -244,20 +255,21 @@ void Esp8266Controller::readAvailable()
         }
         if (operation_ == OtaWaitingPrompt && receiveBuffer_.startsWith('>')) {
             receiveBuffer_.remove(0, 1);
-            if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(120000); }
+            if (!otaPromptHandled_) { qInfo() << "ESP8266 OTA prompt received"; otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(120000); }
             continue;
         }
         if (operation_ == HttpWaitingPrompt && receiveBuffer_.startsWith('>')) {
             receiveBuffer_.remove(0, 1);
             operation_ = HttpSending;
+            qInfo() << "ESP8266 telemetry HTTP sending" << telemetryRequest_.size() << "bytes";
             writeSerial(telemetryRequest_);
             timeoutTimer_->start(5000);
             continue;
         }
         if (operation_ == CommandWaitingPrompt && receiveBuffer_.startsWith('>')) {
-            receiveBuffer_.remove(0, 1); operation_ = CommandSending; writeSerial(commandRequest_); timeoutTimer_->start(5000); continue;
+            receiveBuffer_.remove(0, 1); operation_ = CommandSending; qInfo() << "ESP8266 command HTTP sending" << commandRequest_.size() << "bytes"; writeSerial(commandRequest_); timeoutTimer_->start(5000); continue;
         }
-        if ((operation_ == OtaReceiving || operation_ == CommandSending) && receiveBuffer_.startsWith("+IPD,")) {
+        if ((operation_ == OtaReceiving || operation_ == CommandSending || operation_ == HttpSending) && receiveBuffer_.startsWith("+IPD,")) {
             const int colon = receiveBuffer_.indexOf(':');
             if (colon < 0) break;
             const QByteArray header = receiveBuffer_.left(colon);
@@ -267,6 +279,7 @@ void Esp8266Controller::readAvailable()
             if (receiveBuffer_.size() < colon + 1 + length) break;
             const QByteArray payload = receiveBuffer_.mid(colon + 1, length);
             receiveBuffer_.remove(0, colon + 1 + length);
+            qInfo() << "ESP8266 IPD payload" << length << "bytes operation" << static_cast<int>(operation_);
             processIpdPayload(payload);
             continue;
         }
@@ -287,6 +300,7 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
             writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n"));
             commandResponse_.clear();
             operation_ = Idle;
+            QTimer::singleShot(1000, this, &Esp8266Controller::scheduleNextTask);
         }
         return;
     }
@@ -302,30 +316,82 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
             const int bodyStart = separator + 4;
             if (commandResponse_.size() < bodyStart + contentLength) return;
             const QByteArray body = commandResponse_.mid(bodyStart, contentLength);
-            const QJsonDocument doc = QJsonDocument::fromJson(body);
-            if (!doc.isNull()) {
+            const QByteArray trimmedBody = body.trimmed();
+            const bool noPendingCommand = trimmedBody == QByteArrayLiteral("null");
+            const QJsonDocument doc = QJsonDocument::fromJson(noPendingCommand ? QByteArrayLiteral("{}") : body);
+            if (!noPendingCommand && doc.isNull()) {
+                qWarning() << "ESP8266 command response JSON parse failed:" << body;
                 commandPolling_ = false;
                 timeoutTimer_->stop();
                 writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n"));
                 operation_ = Idle;
+                QTimer::singleShot(500, this, &Esp8266Controller::scheduleNextTask);
+                return;
+            }
+            commandPolling_ = false;
+                timeoutTimer_->stop();
+                writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n"));
+                operation_ = Idle;
+                if (noPendingCommand) {
+                    qInfo() << "ESP8266 command poll: no pending command";
+                    QTimer::singleShot(1000, this, &Esp8266Controller::scheduleNextTask);
+                    return;
+                }
                 const QJsonObject command = doc.object();
+                qInfo() << "ESP8266 command received:" << command.value(QStringLiteral("kind")).toString();
                 if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("ota")) {
-                    const QString manifest = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("manifest_path")).toString();
-                    if (!manifest.isEmpty()) QTimer::singleShot(300, this, [this, manifest] { startOta(mqttHost_, mqttPort_, manifest); });
+                    const QJsonObject payload = command.value(QStringLiteral("payload")).toObject();
+                    const QString manifest = payload.value(QStringLiteral("manifest_path")).toString();
+                    qInfo() << "ESP8266 OTA command payload:" << QJsonDocument(payload).toJson(QJsonDocument::Compact);
+                    if (!manifest.isEmpty()) {
+                        QTimer::singleShot(1000, this, [this, manifest] { startOta(mqttHost_, mqttPort_, manifest); });
+                    } else {
+                        const QString updateId = payload.value(QStringLiteral("update_id")).toString();
+                        if (!updateId.isEmpty()) {
+                            systemUpdateActive_ = true;
+                            systemUpdateId_ = updateId;
+                            otaHost_ = mqttHost_; otaPort_ = mqttPort_;
+                            systemUpdateDir_ = QStringLiteral("/mnt/boot/update");
+                            otaManifestPath_ = QStringLiteral("/api/v1/system-updates/%1").arg(updateId);
+                            otaDownloadingFile_ = false;
+                            otaHttpBody_.clear(); otaHttpHeaders_.clear(); otaReceivedBytes_ = 0; otaExpectedBytes_ = 0;
+                            qInfo() << "ESP8266 OTA command uses system update:" << updateId;
+                            QTimer::singleShot(1000, this, &Esp8266Controller::beginOtaConnection);
+                        } else {
+                            finishWithError(QStringLiteral("OTA 命令缺少 manifest_path"));
+                        }
+                    }
                 } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("system_update")) {
-                    const QJsonObject manifest = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("manifest")).toObject();
+                    const QJsonObject payload = command.value(QStringLiteral("payload")).toObject();
+                    const QJsonObject manifest = payload.value(QStringLiteral("manifest")).toObject();
+                    const QString updateId = payload.value(QStringLiteral("update_id")).toString().isEmpty()
+                        ? manifest.value(QStringLiteral("id")).toString() : payload.value(QStringLiteral("update_id")).toString();
                     const QJsonArray artifacts = manifest.value(QStringLiteral("artifacts")).toArray();
-                    if (manifest.isEmpty() || artifacts.isEmpty()) { finishWithError(QStringLiteral("系统升级清单无效")); return; }
-                    systemUpdateActive_ = true;
-                    systemUpdateId_ = manifest.value(QStringLiteral("id")).toString();
-                    systemUpdateVersion_ = manifest.value(QStringLiteral("version")).toString();
-                    systemUpdateArtifacts_.clear();
-                    for (const QJsonValue &value : artifacts) if (value.isObject()) systemUpdateArtifacts_.append(value.toObject());
-                    systemUpdateIndex_ = 0;
-                    systemUpdateDir_ = QStringLiteral("/mnt/boot/update");
-                    QFile::remove(systemUpdateDir_ + QStringLiteral("/manifest.sha256"));
-                    if (!QDir().mkpath(systemUpdateDir_)) { finishWithError(QStringLiteral("无法创建系统升级目录")); return; }
-                    QTimer::singleShot(300, this, &Esp8266Controller::startNextSystemArtifact);
+                    if (!manifest.isEmpty() && !artifacts.isEmpty()) {
+                        systemUpdateActive_ = true;
+                        systemUpdateId_ = updateId;
+                        systemUpdateVersion_ = manifest.value(QStringLiteral("version")).toString();
+                        systemUpdateArtifacts_.clear();
+                        for (const QJsonValue &value : artifacts) if (value.isObject()) systemUpdateArtifacts_.append(value.toObject());
+                        systemUpdateIndex_ = 0;
+                        systemUpdateDir_ = QStringLiteral("/mnt/boot/update");
+                        QFile::remove(systemUpdateDir_ + QStringLiteral("/manifest.sha256"));
+                        if (!QDir().mkpath(systemUpdateDir_)) { finishWithError(QStringLiteral("无法创建系统升级目录")); return; }
+                        QTimer::singleShot(300, this, &Esp8266Controller::startNextSystemArtifact);
+                        qInfo() << "ESP8266 system update started:" << systemUpdateId_;
+                    } else if (!updateId.isEmpty()) {
+                        systemUpdateActive_ = true;
+                        systemUpdateId_ = updateId;
+                        otaHost_ = mqttHost_; otaPort_ = mqttPort_;
+                        systemUpdateDir_ = QStringLiteral("/mnt/boot/update");
+                        QFile::remove(systemUpdateDir_ + QStringLiteral("/manifest.sha256"));
+                        otaManifestPath_ = QStringLiteral("/api/v1/system-updates/%1").arg(updateId);
+                        otaDownloadingFile_ = false;
+                        otaHttpBody_.clear(); otaHttpHeaders_.clear(); otaReceivedBytes_ = 0; otaExpectedBytes_ = 0;
+                        QTimer::singleShot(300, this, &Esp8266Controller::beginOtaConnection);
+                    } else {
+                        finishWithError(QStringLiteral("系统升级任务缺少 update_id"));
+                    }
                 } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_sampling_interval")) {
                     const int seconds = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("seconds")).toInt();
                     if (seconds >= 1 && seconds <= 3600) emit remoteSamplingInterval(seconds);
@@ -336,24 +402,33 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
                                           p.value("pressure_min").toDouble(), p.value("pressure_max").toDouble(),
                                           p.value("illuminance_min").toDouble(), p.value("illuminance_max").toDouble());
                 }
+                const QString kind = command.value(QStringLiteral("kind")).toString();
+                if (kind != QStringLiteral("ota") && kind != QStringLiteral("system_update")) scheduleNextTask();
             }
         }
         return;
-    }
+    qInfo() << "ESP8266 HTTP payload dispatch" << payload.size() << "bytes operation" << static_cast<int>(operation_);
     processHttpData(payload);
 }
 
 void Esp8266Controller::processHttpData(const QByteArray &data)
 {
+    qInfo() << "ESP8266 HTTP data" << data.size() << data.left(120).toHex();
     if (!otaHeadersParsed_) {
         otaHttpHeaders_.append(data);
-        const int separator = otaHttpHeaders_.indexOf("\r\n\r\n");
-        if (separator < 0) return;
-        const QByteArray body = otaHttpHeaders_.mid(separator + 4);
+        const int httpStart = otaHttpHeaders_.indexOf("HTTP/");
+        if (httpStart > 0) otaHttpHeaders_.remove(0, httpStart);
+        int separator = otaHttpHeaders_.indexOf("\r\n\r\n");
+        int separatorLength = 4;
+        if (separator < 0) { separator = otaHttpHeaders_.indexOf("\n\n"); separatorLength = 2; }
+        if (separator < 0) { separator = otaHttpHeaders_.indexOf("\r\r"); separatorLength = 2; }
+        if (separator < 0) { qInfo() << "ESP8266 OTA waiting for HTTP headers, buffered" << otaHttpHeaders_.size(); return; }
+        const QByteArray body = otaHttpHeaders_.mid(separator + separatorLength);
         const QByteArray headers = otaHttpHeaders_.left(separator);
         otaHttpHeaders_ = headers;
         otaHeadersParsed_ = true;
         const QList<QByteArray> lines = headers.split('\n');
+        qInfo() << "ESP8266 OTA HTTP status" << QString::fromLatin1(lines.value(0));
         if (lines.isEmpty() || !lines.first().contains(" 200 ")) { finishWithError(QStringLiteral("OTA HTTP 响应失败: %1").arg(QString::fromLatin1(lines.value(0)))); return; }
         QRegularExpression expression(QStringLiteral("(?im)^Content-Length:\\s*(\\d+)") );
         const QRegularExpressionMatch match = expression.match(QString::fromLatin1(headers));
@@ -372,6 +447,7 @@ void Esp8266Controller::processHttpData(const QByteArray &data)
     } else otaHttpBody_.append(data);
     otaReceivedBytes_ += data.size();
     emit otaProgress(otaReceivedBytes_, otaExpectedBytes_);
+    if (otaExpectedBytes_ > 0) qInfo() << "ESP8266 OTA progress" << otaReceivedBytes_ << "/" << otaExpectedBytes_;
     const qint64 logStep = qMax<qint64>(1, otaExpectedBytes_ / 20);
     if (otaReceivedBytes_ >= otaLastLoggedBytes_ + logStep || otaReceivedBytes_ >= otaExpectedBytes_) {
         QFile progressLog(QStringLiteral("/tmp/environment_monitor_ota_progress.log"));
@@ -385,6 +461,7 @@ void Esp8266Controller::processHttpData(const QByteArray &data)
 void Esp8266Controller::finishHttpResponse()
 {
     timeoutTimer_->stop();
+    qInfo() << "ESP8266 OTA HTTP response complete" << otaReceivedBytes_ << "/" << otaExpectedBytes_ << "file" << otaDownloadingFile_;
     if (otaDownloadingFile_) {
         if (otaFile_) { otaFile_->flush(); otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
         QFile file(systemUpdateActive_ ? otaLocalPath_ : QStringLiteral("/tmp/environment_monitor.new"));
@@ -410,6 +487,20 @@ void Esp8266Controller::finishHttpResponse()
     }
     const QJsonDocument document = QJsonDocument::fromJson(otaHttpBody_);
     const QJsonObject manifest = document.object();
+    if (systemUpdateActive_ && manifest.value(QStringLiteral("artifacts")).isArray()) {
+        const QJsonArray artifacts = manifest.value(QStringLiteral("artifacts")).toArray();
+        if (artifacts.isEmpty()) { finishWithError(QStringLiteral("系统升级清单没有文件")); return; }
+        systemUpdateVersion_ = manifest.value(QStringLiteral("version")).toString();
+        systemUpdateArtifacts_.clear();
+        for (const QJsonValue &value : artifacts) if (value.isObject()) systemUpdateArtifacts_.append(value.toObject());
+        systemUpdateIndex_ = 0;
+        systemUpdateDir_ = QStringLiteral("/mnt/boot/update");
+        QFile::remove(systemUpdateDir_ + QStringLiteral("/manifest.sha256"));
+        if (!QDir().mkpath(systemUpdateDir_)) { finishWithError(QStringLiteral("无法创建系统升级目录")); return; }
+        writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n")); operation_ = Idle;
+        QTimer::singleShot(300, this, &Esp8266Controller::startNextSystemArtifact);
+        return;
+    }
     otaVersion_ = manifest.value(QStringLiteral("version")).toString();
     otaFilePath_ = manifest.value(QStringLiteral("path")).toString();
     otaFileSha256_ = manifest.value(QStringLiteral("sha256")).toString().trimmed();
@@ -418,6 +509,16 @@ void Esp8266Controller::finishHttpResponse()
     otaExpectedFileBytes_ = size; otaDownloadingFile_ = true; otaExpectedBytes_ = 0; otaReceivedBytes_ = 0;
     writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n")); operation_ = Idle;
     QTimer::singleShot(200, this, &Esp8266Controller::beginOtaConnection);
+}
+
+void Esp8266Controller::scheduleNextTask()
+{
+    if (operation_ != Idle || fd_ < 0) return;
+    if (connectQueued_) { const QString ssid = queuedSsid_; const QString password = queuedPassword_; connectQueued_ = false; connectNetwork(ssid, password); return; }
+    if (scanQueued_) { scanQueued_ = false; scanNetworks(); return; }
+    if (!telemetryQueue_.isEmpty()) { const SensorSnapshot snapshot = telemetryQueue_.dequeue(); publishTelemetry(snapshot); return; }
+    if (commandQueued_) { commandQueued_ = false; pollRemoteCommand(); return; }
+    if (statusQueued_) { statusQueued_ = false; pollWifiStatus(); return; }
 }
 
 void Esp8266Controller::processLine(const QByteArray &line)
@@ -447,53 +548,68 @@ void Esp8266Controller::processLine(const QByteArray &line)
         beginOtaTcpConnection();
         return;
     }
-    if (text == QStringLiteral("ERROR") || text == QStringLiteral("FAIL") || text.startsWith(QStringLiteral("+CWJAP:"))) { finishWithError(QStringLiteral("ESP8266 返回: %1").arg(text)); return; }
+    if (text == QStringLiteral("SEND OK")) { qInfo() << "ESP8266 send completed, waiting for response"; return; }
+    if (text == QStringLiteral("ERROR") || text == QStringLiteral("FAIL") || text.startsWith(QStringLiteral("+CWJAP:"))) {
+        qWarning() << "ESP8266 AT error:" << text << "operation" << static_cast<int>(operation_);
+        if (operation_ != Idle) finishWithError(QStringLiteral("ESP8266 返回: %1").arg(text));
+        return;
+    }
     if (text == QStringLiteral("CLOSED") && operation_ == OtaReceiving && otaReceivedBytes_ < otaExpectedBytes_) { finishWithError(QStringLiteral("OTA 连接提前关闭: 已接收 %1/%2 字节").arg(otaReceivedBytes_).arg(otaExpectedBytes_)); return; }
     if (operation_ == WaitingForScanMode && text == QStringLiteral("OK")) { operation_ = Scanning; sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000); }
-    else if (operation_ == Scanning && text == QStringLiteral("OK")) { timeoutTimer_->stop(); std::sort(networks_.begin(), networks_.end(), [](const WifiNetwork &a, const WifiNetwork &b) { return a.rssi > b.rssi; }); operation_ = Idle; emit scanFinished(networks_); }
+    else if (operation_ == Scanning && text == QStringLiteral("OK")) { timeoutTimer_->stop(); std::sort(networks_.begin(), networks_.end(), [](const WifiNetwork &a, const WifiNetwork &b) { return a.rssi > b.rssi; }); operation_ = Idle; scheduleNextTask(); emit scanFinished(networks_); }
     else if (operation_ == Connecting && text == QStringLiteral("OK")) { operation_ = QueryingIp; sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000); }
-    else if (operation_ == QueryingIp && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) { timeoutTimer_->stop(); operation_ = Idle; emit connectionStateChanged(true, text); }
-    else if (operation_ == QueryingIp && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
+    else if (operation_ == QueryingIp && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) { timeoutTimer_->stop(); operation_ = Idle; scheduleNextTask(); wifiConnected_ = true; emit connectionStateChanged(true, text); }
+    else if (operation_ == QueryingIp && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; scheduleNextTask(); }
     else if (operation_ == QueryingStatus && text.startsWith(QStringLiteral("+CIFSR:STAIP"))) {
-        timeoutTimer_->stop(); operation_ = Idle;
+        timeoutTimer_->stop(); operation_ = Idle; scheduleNextTask();
         const bool connected = !text.contains(QStringLiteral("\"0.0.0.0\""));
+        wifiConnected_ = connected;
         emit connectionStateChanged(connected, connected ? text : QStringLiteral("WiFi 未连接"));
     }
-    else if (operation_ == QueryingStatus && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; }
-    else if (operation_ == HttpConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) {
+    else if (operation_ == QueryingStatus && text == QStringLiteral("OK")) { timeoutTimer_->stop(); operation_ = Idle; scheduleNextTask(); }
+    else if (operation_ == HttpConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED"))) {
         operation_ = HttpWaitingPrompt;
         sendCommand(QStringLiteral("AT+CIPSEND=%1\r\n").arg(telemetryRequest_.size()).toUtf8(), 5000);
     }
-    else if (operation_ == CommandConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) {
+    else if (operation_ == CommandConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED"))) {
+        qInfo() << "ESP8266 command TCP connected";
         operation_ = CommandWaitingPrompt;
         sendCommand(QStringLiteral("AT+CIPSEND=%1\r\n").arg(commandRequest_.size()).toUtf8(), 5000);
     }
-    else if (operation_ == OtaConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED") || text == QStringLiteral("OK"))) { if (!otaPromptHandled_) sendOtaRequest(); }
+    else if (operation_ == OtaConnecting && (text == QStringLiteral("CONNECT") || text == QStringLiteral("Linked") || text == QStringLiteral("ALREADY CONNECTED"))) { if (!otaPromptHandled_) sendOtaRequest(); }
     else if (operation_ == OtaWaitingPrompt && text == QStringLiteral(">")) { if (!otaPromptHandled_) { otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(30000); } }
-    else if (text == QStringLiteral("WIFI DISCONNECT")) emit connectionStateChanged(false, QStringLiteral("WiFi 已断开"));
+    else if (text == QStringLiteral("WIFI DISCONNECT")) { wifiConnected_ = false; emit connectionStateChanged(false, QStringLiteral("WiFi 已断开")); }
 }
 
 void Esp8266Controller::timeout()
 {
+    qWarning() << "ESP8266 task timeout, operation" << static_cast<int>(operation_);
     if (operation_ == HttpConnecting || operation_ == HttpWaitingPrompt || operation_ == HttpSending) {
         writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n"));
         operation_ = Idle;
+        QTimer::singleShot(1000, this, &Esp8266Controller::scheduleNextTask);
         return;
     }
     if (operation_ == QueryingStatus) {
-        operation_ = Idle;
-        emit connectionStateChanged(false, QStringLiteral("WiFi 状态查询超时"));
+        operation_ = Idle; scheduleNextTask();
+        qWarning() << "ESP8266 WiFi status query timeout, keeping state" << wifiConnected_;
+        emit connectionStateChanged(wifiConnected_, QStringLiteral("WiFi 状态查询超时, 保持上次状态"));
         return;
     }
     finishWithError(QStringLiteral("ESP8266 响应超时, 请检查 WiFi, 服务器地址和串口连接"));
 }
 void Esp8266Controller::finishWithError(const QString &message)
 {
+    qWarning() << "ESP8266 task failed:" << message << "operation" << static_cast<int>(operation_);
     timeoutTimer_->stop();
     commandPolling_ = false;
     if (otaFile_) { otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
     if (otaDownloadingFile_) QFile::remove(systemUpdateActive_ ? otaLocalPath_ : QStringLiteral("/tmp/environment_monitor.new"));
-    operation_ = Idle; emit operationFailed(message);
+    const bool hadTcpOperation = operation_ == CommandConnecting || operation_ == CommandWaitingPrompt || operation_ == CommandSending || operation_ == HttpConnecting || operation_ == HttpWaitingPrompt || operation_ == HttpSending;
+    if (hadTcpOperation) writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n"));
+    operation_ = Idle;
+    QTimer::singleShot(hadTcpOperation ? 1000 : 0, this, &Esp8266Controller::scheduleNextTask);
+    emit operationFailed(message);
 }
 QString Esp8266Controller::escapeArgument(const QString &value)
 {
