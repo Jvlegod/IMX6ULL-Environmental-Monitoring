@@ -33,10 +33,7 @@ WifiDialog::WifiDialog(QWidget *parent)
       ssidEdit_(new QLineEdit), passwordEdit_(new QLineEdit),
       connectButton_(new QPushButton(QStringLiteral("连接网络"))),
       networkTable_(new QTableWidget(0, 3)), statusLabel_(new QLabel(QStringLiteral("未连接 ESP8266"))),
-      otaHostEdit_(new QLineEdit(QStringLiteral("192.168.43.4"))),
-      otaPortEdit_(new QLineEdit(QStringLiteral("18080"))),
-      otaManifestEdit_(new QLineEdit(QStringLiteral("/manifest.json"))),
-      otaButton_(new QPushButton(QStringLiteral("检查并升级应用"))), otaProgress_(new QProgressBar),
+      otaProgress_(new QProgressBar),
       keyboardPanel_(new QWidget(this)), keyboardEdit_(nullptr), closeAllowed_(false)
 {
     setWindowTitle(QStringLiteral("ESP8266 WiFi 配置"));
@@ -87,14 +84,10 @@ WifiDialog::WifiDialog(QWidget *parent)
     networkTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     networkTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
-    auto *otaForm = new QFormLayout;
-    otaForm->addRow(QStringLiteral("OTA 服务器"), otaHostEdit_);
-    otaForm->addRow(QStringLiteral("HTTP 端口"), otaPortEdit_);
-    otaForm->addRow(QStringLiteral("Manifest 路径"), otaManifestEdit_);
     otaProgress_->setRange(0, 100);
     otaProgress_->setValue(0);
     otaProgress_->setTextVisible(true);
-    otaForm->addRow(otaButton_, otaProgress_);
+    otaProgress_->setVisible(false);
 
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(titleLayout);
@@ -105,7 +98,7 @@ WifiDialog::WifiDialog(QWidget *parent)
     auto *scrollLayout = new QVBoxLayout(scrollContents);
     scrollLayout->addWidget(networkTable_, 1);
     scrollLayout->addLayout(networkForm);
-    scrollLayout->addLayout(otaForm);
+    scrollLayout->addWidget(otaProgress_);
     auto *scrollArea = new QScrollArea;
     scrollArea->setFrameShape(QFrame::NoFrame);
     scrollArea->setWidgetResizable(true);
@@ -161,12 +154,8 @@ WifiDialog::WifiDialog(QWidget *parent)
     qApp->installEventFilter(this);
     ssidEdit_->installEventFilter(this);
     passwordEdit_->installEventFilter(this);
-    otaHostEdit_->installEventFilter(this);
-    otaPortEdit_->installEventFilter(this);
-    otaManifestEdit_->installEventFilter(this);
 
     connect(scanButton_, &QPushButton::clicked, this, &WifiDialog::scanNetworks);
-    connect(otaButton_, &QPushButton::clicked, this, &WifiDialog::startOta);
     connect(connectButton_, &QPushButton::clicked, this, &WifiDialog::connectNetwork);
     connect(networkTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) { ssidEdit_->setText(networkTable_->item(row, 0)->text()); });
     connect(&controller_, &Esp8266Controller::scanFinished, this, &WifiDialog::showScanResults);
@@ -201,9 +190,6 @@ void WifiDialog::loadSettings()
     if (portIndex >= 0) portCombo_->setCurrentIndex(portIndex);
     ssidEdit_->setText(settings.value(QStringLiteral("wifi/ssid")).toString());
     passwordEdit_->setText(settings.value(QStringLiteral("wifi/password")).toString());
-    otaHostEdit_->setText(settings.value(QStringLiteral("ota/host"), otaHostEdit_->text()).toString());
-    otaPortEdit_->setText(settings.value(QStringLiteral("ota/port"), otaPortEdit_->text()).toString());
-    otaManifestEdit_->setText(settings.value(QStringLiteral("ota/manifest"), otaManifestEdit_->text()).toString());
 }
 
 void WifiDialog::saveSettings() const
@@ -212,9 +198,6 @@ void WifiDialog::saveSettings() const
     settings.setValue(QStringLiteral("wifi/serialPort"), portCombo_->currentData().toString());
     settings.setValue(QStringLiteral("wifi/ssid"), ssidEdit_->text());
     settings.setValue(QStringLiteral("wifi/password"), passwordEdit_->text());
-    settings.setValue(QStringLiteral("ota/host"), otaHostEdit_->text());
-    settings.setValue(QStringLiteral("ota/port"), otaPortEdit_->text());
-    settings.setValue(QStringLiteral("ota/manifest"), otaManifestEdit_->text());
     settings.sync();
 }
 
@@ -333,7 +316,8 @@ void WifiDialog::showError(const QString &message)
 {
     statusLabel_->setText(message);
     emit wifiStateChanged(false, message);
-    otaButton_->setEnabled(true);
+    otaProgress_->setValue(0);
+    otaProgress_->setVisible(false);
     setBusy(false);
 }
 
@@ -342,22 +326,10 @@ void WifiDialog::publishTelemetry(const SensorSnapshot &snapshot)
     controller_.publishTelemetry(snapshot);
 }
 
-void WifiDialog::startOta()
-{
-    bool ok = false;
-    const quint16 port = otaPortEdit_->text().toUShort(&ok);
-    if (!ok || port == 0) { showError(QStringLiteral("HTTP 端口无效")); return; }
-    if (!controller_.isOpen()) { showError(QStringLiteral("请先连接 ESP8266 WiFi")); return; }
-    saveSettings();
-    otaButton_->setEnabled(false);
-    otaProgress_->setValue(0);
-    statusLabel_->setText(QStringLiteral("正在通过 WiFi 检查 OTA 更新..."));
-    controller_.startOta(otaHostEdit_->text(), port, otaManifestEdit_->text());
-}
-
 void WifiDialog::showOtaProgress(qint64 received, qint64 total)
 {
     const int percent = total > 0 ? static_cast<int>((received * 100) / total) : 0;
+    otaProgress_->setVisible(true);
     otaProgress_->setValue(qBound(0, percent, 100));
     statusLabel_->setText(QStringLiteral("OTA 下载中: %1 / %2 字节").arg(received).arg(total));
     emit otaStatusChanged(otaProgress_->value(), statusLabel_->text());
@@ -376,7 +348,6 @@ void WifiDialog::applyOtaPackage(const QString &version, const QString &path)
     }
     statusLabel_->setText(QStringLiteral("已校验版本 %1, 正在替换并重启应用").arg(version));
     emit otaStatusChanged(100, statusLabel_->text());
-    otaButton_->setEnabled(false);
     QTimer::singleShot(500, qApp, &QCoreApplication::quit);
 }
 
@@ -384,5 +355,4 @@ void WifiDialog::setBusy(bool busy)
 {
     scanButton_->setEnabled(!busy && controller_.isOpen());
     connectButton_->setEnabled(!busy && controller_.isOpen());
-    otaButton_->setEnabled(!busy && controller_.isOpen());
 }

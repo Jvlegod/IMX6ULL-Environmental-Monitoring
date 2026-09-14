@@ -43,7 +43,6 @@ private slots:
     void showPortState(bool open, const QString &detail);
     void showConnectionState(bool connected, const QString &detail);
     void showError(const QString &message);
-    void startOta();
     void showOtaProgress(qint64 received, qint64 total);
     void applyOtaPackage(const QString &version, const QString &path);
 
@@ -60,10 +59,6 @@ private:
     QLineEdit *ssidEdit_;
     QLineEdit *passwordEdit_;
     QPushButton *connectButton_;
-    QLineEdit *otaHostEdit_;
-    QLineEdit *otaPortEdit_;
-    QLineEdit *otaManifestEdit_;
-    QPushButton *otaButton_;
     QProgressBar *otaProgress_;
     QTableWidget *networkTable_;
     QLabel *statusLabel_;
