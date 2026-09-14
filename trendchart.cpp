@@ -27,13 +27,17 @@ void TrendChart::paintEvent(QPaintEvent *)
         if (!hasValue) continue;
         const double span = qMax(0.001, maxValue - minValue);
         QPainterPath path;
+        bool hasPoint = false;
+        int validPoints = 0;
         for (int i = 0; i < values[s].size(); ++i) {
             if (!qIsFinite(values[s][i])) continue;
             const qreal x = plot.left() + plot.width() * i / qMax(1, values[s].size() - 1);
             const qreal y = plot.bottom() - qBound(0.0, (values[s][i] - minValue) / span, 1.0) * plot.height();
-            if (path.isEmpty()) path.moveTo(x, y); else path.lineTo(x, y);
+            if (!hasPoint) { path.moveTo(x, y); hasPoint = true; }
+            else path.lineTo(x, y);
+            ++validPoints;
         }
-        p.setPen(QPen(colors[s], 2)); p.drawPath(path);
+        if (validPoints >= 2) { p.setPen(QPen(colors[s], 2)); p.drawPath(path); }
     }
     const QStringList labels{QStringLiteral("温度 °C"), QStringLiteral("湿度 %"), QStringLiteral("压力 kPa"), QStringLiteral("光照 lux")}; int x = plot.left();
     for (int i = 0; i < colors.size(); ++i) { p.setPen(QPen(colors[i], 2)); p.drawLine(x, height() - 20, x + 18, height() - 20); p.setPen(QColor("#65737c")); p.drawText(x + 24, height() - 14, labels[i]); x += 100; }
