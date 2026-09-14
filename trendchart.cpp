@@ -14,7 +14,21 @@ void TrendChart::paintEvent(QPaintEvent *)
     p.setPen(QColor("#73828b")); p.drawText(QRectF(0, plot.top() - 8, 38, 20), Qt::AlignRight, QStringLiteral("1100")); p.drawText(QRectF(0, plot.bottom() - 10, 38, 20), Qt::AlignRight, QStringLiteral("0"));
     const QVector<QColor> colors{QColor("#ef8354"), QColor("#4ea5d9"), QColor("#6c8ead"), QColor("#e5b94c")};
     const QVector<QVector<double>> values{temperature_, humidity_, pressure_, illuminance_};
-    for (int s = 0; s < values.size(); ++s) { if (values[s].size() < 2) continue; QPainterPath path; for (int i = 0; i < values[s].size(); ++i) { const qreal x = plot.left() + plot.width() * i / 59.0; const qreal y = plot.bottom() - qBound(0.0, values[s][i] / 1100.0, 1.0) * plot.height(); if (i == 0) path.moveTo(x, y); else path.lineTo(x, y); } p.setPen(QPen(colors[s], 2)); p.drawPath(path); }
+    for (int s = 0; s < values.size(); ++s) {
+        if (values[s].size() < 2) continue;
+        double minValue = values[s].first();
+        double maxValue = minValue;
+        for (double value : values[s]) { if (!qIsFinite(value)) continue; minValue = qMin(minValue, value); maxValue = qMax(maxValue, value); }
+        const double span = qMax(0.001, maxValue - minValue);
+        QPainterPath path;
+        for (int i = 0; i < values[s].size(); ++i) {
+            if (!qIsFinite(values[s][i])) continue;
+            const qreal x = plot.left() + plot.width() * i / qMax(1, values[s].size() - 1);
+            const qreal y = plot.bottom() - qBound(0.0, (values[s][i] - minValue) / span, 1.0) * plot.height();
+            if (path.isEmpty()) path.moveTo(x, y); else path.lineTo(x, y);
+        }
+        p.setPen(QPen(colors[s], 2)); p.drawPath(path);
+    }
     const QStringList labels{QStringLiteral("温度 °C"), QStringLiteral("湿度 %"), QStringLiteral("压力 kPa"), QStringLiteral("光照 lux")}; int x = plot.left();
     for (int i = 0; i < colors.size(); ++i) { p.setPen(QPen(colors[i], 2)); p.drawLine(x, height() - 20, x + 18, height() - 20); p.setPen(QColor("#65737c")); p.drawText(x + 24, height() - 14, labels[i]); x += 100; }
 }
