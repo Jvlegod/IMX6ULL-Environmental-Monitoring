@@ -255,7 +255,7 @@ void Esp8266Controller::readAvailable()
         }
         if (operation_ == OtaWaitingPrompt && receiveBuffer_.startsWith('>')) {
             receiveBuffer_.remove(0, 1);
-            if (!otaPromptHandled_) { qInfo() << "ESP8266 OTA prompt received"; otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(120000); }
+            if (!otaPromptHandled_) { qInfo() << "ESP8266 OTA prompt received"; otaPromptHandled_ = true; operation_ = OtaReceiving; writeSerial(otaRequest_); timeoutTimer_->start(600000); }
             continue;
         }
         if (operation_ == HttpWaitingPrompt && receiveBuffer_.startsWith('>')) {
@@ -448,7 +448,7 @@ void Esp8266Controller::processHttpData(const QByteArray &data)
     otaReceivedBytes_ += data.size();
     // Large system images may take longer than the initial request timeout.
     // Treat the timeout as an idle-data timeout and refresh it for every chunk.
-    timeoutTimer_->start(120000);
+    timeoutTimer_->start(600000);
     emit otaProgress(otaReceivedBytes_, otaExpectedBytes_);
     if (otaExpectedBytes_ > 0) qInfo() << "ESP8266 OTA progress" << otaReceivedBytes_ << "/" << otaExpectedBytes_;
     const qint64 logStep = qMax<qint64>(1, otaExpectedBytes_ / 20);
