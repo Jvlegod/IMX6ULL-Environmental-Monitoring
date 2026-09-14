@@ -395,6 +395,10 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
                 } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_sampling_interval")) {
                     const int seconds = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("seconds")).toInt();
                     if (seconds >= 1 && seconds <= 3600) emit remoteSamplingInterval(seconds);
+                } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_device_enabled")) {
+                    const QJsonObject p = command.value(QStringLiteral("payload")).toObject();
+                    const QString device = p.value(QStringLiteral("device")).toString();
+                    if (!device.isEmpty() && p.value(QStringLiteral("enabled")).isBool()) emit remoteDeviceEnabled(device, p.value(QStringLiteral("enabled")).toBool());
                 } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_thresholds")) {
                     const QJsonObject p = command.value(QStringLiteral("payload")).toObject();
                     emit remoteThresholds(p.value("temperature_min").toDouble(), p.value("temperature_max").toDouble(),
