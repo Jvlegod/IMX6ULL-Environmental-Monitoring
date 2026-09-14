@@ -395,6 +395,10 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
                 } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_sampling_interval")) {
                     const int seconds = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("seconds")).toInt();
                     if (seconds >= 1 && seconds <= 3600) emit remoteSamplingInterval(seconds);
+                } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("start_collection") || command.value(QStringLiteral("kind")).toString() == QStringLiteral("pause_collection")) {
+                    const bool running = command.value(QStringLiteral("kind")).toString() == QStringLiteral("start_collection");
+                    qInfo() << "ESP8266 collection command:" << (running ? "start" : "pause");
+                    emit remoteCollectionState(running);
                 } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_device_enabled")) {
                     const QJsonObject p = command.value(QStringLiteral("payload")).toObject();
                     const QString device = p.value(QStringLiteral("device")).toString();

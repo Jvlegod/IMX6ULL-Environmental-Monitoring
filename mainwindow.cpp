@@ -194,6 +194,10 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
     wifiDialog_ = new WifiDialog(this);
     wifiDialog_->hide();
     connect(provider_, &ISensorProvider::snapshotReady, wifiDialog_, &WifiDialog::publishTelemetry);
+    connect(wifiDialog_->controller(), &Esp8266Controller::remoteCollectionState, this, [this](bool running) {
+        if (running) { provider_->start(); samplingActive_ = true; samplingButton_->setText(QStringLiteral("暂停采集")); statusBar()->showMessage(QStringLiteral("网页已开始采集"), 3000); }
+        else { provider_->stop(); samplingActive_ = false; samplingButton_->setText(QStringLiteral("开始采集")); statusBar()->showMessage(QStringLiteral("网页已暂停采集"), 3000); }
+    });
     connect(wifiDialog_->controller(), &Esp8266Controller::remoteDeviceEnabled, this, [this](const QString &device, bool enabled) {
         if (device != QStringLiteral("all")) return;
         enabledDeviceMask_ = enabled ? SensorAll : 0;

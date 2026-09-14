@@ -44,6 +44,7 @@ signals:
     void systemUpdateReady(const QString &updateId, const QString &directory);
     void remoteSamplingInterval(int seconds);
     void remoteDeviceEnabled(const QString &device, bool enabled);
+    void remoteCollectionState(bool running);
     void remoteThresholds(double temperatureMin, double temperatureMax, double humidityMin, double humidityMax,
                           double pressureMin, double pressureMax, double illuminanceMin, double illuminanceMax);
 
