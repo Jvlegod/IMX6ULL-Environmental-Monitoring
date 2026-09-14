@@ -446,6 +446,9 @@ void Esp8266Controller::processHttpData(const QByteArray &data)
         if (!otaFile_ || otaFile_->write(data) != data.size()) { finishWithError(QStringLiteral("写入 OTA 临时文件失败")); return; }
     } else otaHttpBody_.append(data);
     otaReceivedBytes_ += data.size();
+    // Large system images may take longer than the initial request timeout.
+    // Treat the timeout as an idle-data timeout and refresh it for every chunk.
+    timeoutTimer_->start(120000);
     emit otaProgress(otaReceivedBytes_, otaExpectedBytes_);
     if (otaExpectedBytes_ > 0) qInfo() << "ESP8266 OTA progress" << otaReceivedBytes_ << "/" << otaExpectedBytes_;
     const qint64 logStep = qMax<qint64>(1, otaExpectedBytes_ / 20);
