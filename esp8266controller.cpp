@@ -557,7 +557,12 @@ void Esp8266Controller::processLine(const QByteArray &line)
         if (operation_ != Idle) finishWithError(QStringLiteral("ESP8266 返回: %1").arg(text));
         return;
     }
-    if (text == QStringLiteral("CLOSED") && operation_ == OtaReceiving && otaReceivedBytes_ < otaExpectedBytes_) { finishWithError(QStringLiteral("OTA 连接提前关闭: 已接收 %1/%2 字节").arg(otaReceivedBytes_).arg(otaExpectedBytes_)); return; }
+    if (text == QStringLiteral("CLOSED") && operation_ == OtaReceiving && otaReceivedBytes_ < otaExpectedBytes_) {
+        qWarning() << "ESP8266 OTA connection closed before expected length, waiting for trailing data"
+                   << otaReceivedBytes_ << "/" << otaExpectedBytes_;
+        timeoutTimer_->start(10000);
+        return;
+    }
     if (operation_ == WaitingForScanMode && text == QStringLiteral("OK")) { operation_ = Scanning; sendCommand(QByteArrayLiteral("AT+CWLAP\r\n"), 15000); }
     else if (operation_ == Scanning && text == QStringLiteral("OK")) { timeoutTimer_->stop(); std::sort(networks_.begin(), networks_.end(), [](const WifiNetwork &a, const WifiNetwork &b) { return a.rssi > b.rssi; }); operation_ = Idle; scheduleNextTask(); emit scanFinished(networks_); }
     else if (operation_ == Connecting && text == QStringLiteral("OK")) { operation_ = QueryingIp; sendCommand(QByteArrayLiteral("AT+CIFSR\r\n"), 3000); }
