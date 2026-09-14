@@ -173,6 +173,7 @@ WifiDialog::WifiDialog(QWidget *parent)
     connect(&controller_, &Esp8266Controller::portStateChanged, this, &WifiDialog::showPortState);
     connect(&controller_, &Esp8266Controller::connectionStateChanged, this, &WifiDialog::showConnectionState);
     connect(&controller_, &Esp8266Controller::operationFailed, this, &WifiDialog::showError);
+    connect(&controller_, &Esp8266Controller::systemUpdateReady, this, [this](const QString &id, const QString &dir) { statusLabel_->setText(QStringLiteral("系统升级包已下载: %1 (%2)").arg(id, dir)); });
     connect(&controller_, &Esp8266Controller::otaProgress, this, &WifiDialog::showOtaProgress);
     connect(&controller_, &Esp8266Controller::otaPackageReady, this, &WifiDialog::applyOtaPackage);
 

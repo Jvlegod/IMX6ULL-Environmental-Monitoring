@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QVector>
+#include <QJsonObject>
 #include "sensorprovider.h"
 
 class QSocketNotifier;
@@ -39,6 +40,7 @@ signals:
     void operationFailed(const QString &message);
     void otaProgress(qint64 received, qint64 total);
     void otaPackageReady(const QString &version, const QString &path);
+    void systemUpdateReady(const QString &updateId, const QString &directory);
     void remoteSamplingInterval(int seconds);
     void remoteThresholds(double temperatureMin, double temperatureMax, double humidityMin, double humidityMax,
                           double pressureMin, double pressureMax, double illuminanceMin, double illuminanceMax);
@@ -63,6 +65,7 @@ private:
     void beginOtaConnection();
     void beginOtaTcpConnection();
     bool writeSerial(const QByteArray &data);
+    void startNextSystemArtifact();
 
     int fd_;
     QSocketNotifier *notifier_;
@@ -98,6 +101,13 @@ private:
     QByteArray commandResponse_;
     bool commandPolling_;
     qint64 otaLastLoggedBytes_;
+    bool systemUpdateActive_;
+    QString systemUpdateId_;
+    QString systemUpdateVersion_;
+    QString systemUpdateDir_;
+    QVector<QJsonObject> systemUpdateArtifacts_;
+    int systemUpdateIndex_;
+    QString otaLocalPath_;
 };
 
 Q_DECLARE_METATYPE(WifiNetwork)

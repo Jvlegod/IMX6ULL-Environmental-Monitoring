@@ -3,7 +3,9 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSocketNotifier>
@@ -25,7 +27,7 @@ speed_t serialSpeed(int baud)
 Esp8266Controller::Esp8266Controller(QObject *parent)
     : QObject(parent), fd_(-1), notifier_(nullptr), timeoutTimer_(new QTimer(this)), statusTimer_(new QTimer(this)), commandTimer_(new QTimer(this)),
       operation_(Idle), simulated_(false), otaPromptHandled_(false), otaHeadersParsed_(false),
-      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001")), commandPolling_(false), otaLastLoggedBytes_(0)
+      otaPort_(80), otaExpectedBytes_(0), otaExpectedFileBytes_(0), otaReceivedBytes_(0), otaFile_(nullptr), otaDownloadingFile_(false), mqttReady_(false), mqttPort_(1883), mqttDeviceId_(QStringLiteral("gateway-001")), commandPolling_(false), otaLastLoggedBytes_(0), systemUpdateActive_(false), systemUpdateIndex_(0)
 {
     timeoutTimer_->setSingleShot(true);
     connect(timeoutTimer_, &QTimer::timeout, this, &Esp8266Controller::timeout);
@@ -144,6 +146,25 @@ void Esp8266Controller::publishTelemetry(const SensorSnapshot &snapshot)
     operation_ = HttpConnecting;
     const QString command = QStringLiteral("AT+CIPSTART=\"TCP\",\"%1\",%2\r\n").arg(mqttHost_).arg(mqttPort_);
     sendCommand(command.toUtf8(), 10000);
+}
+
+void Esp8266Controller::startNextSystemArtifact()
+{
+    if (!systemUpdateActive_ || systemUpdateIndex_ >= systemUpdateArtifacts_.size()) {
+        systemUpdateActive_ = false;
+        emit systemUpdateReady(systemUpdateId_, systemUpdateDir_);
+        return;
+    }
+    const QJsonObject artifact = systemUpdateArtifacts_.at(systemUpdateIndex_);
+    const QString path = artifact.value(QStringLiteral("path")).toString();
+    const QString kind = artifact.value(QStringLiteral("kind")).toString();
+    const QString fileName = kind == QStringLiteral("rootfs") ? QStringLiteral("rootfs.tar.bz2") : (kind == QStringLiteral("uboot") ? QStringLiteral("u-boot.imx") : (kind == QStringLiteral("dts") ? QStringLiteral("imx6ull-14x14-evk-emmc.dtb") : QStringLiteral("zImage")));
+    if (path.isEmpty() || !path.startsWith(QLatin1Char('/')) || path.contains(QStringLiteral(".."))) { finishWithError(QStringLiteral("系统升级文件路径不安全")); return; }
+    otaManifestPath_ = path + QStringLiteral("/manifest");
+    otaLocalPath_ = systemUpdateDir_ + QLatin1Char('/') + fileName;
+    otaDownloadingFile_ = false;
+    otaHttpBody_.clear(); otaHttpHeaders_.clear(); otaReceivedBytes_ = 0; otaExpectedBytes_ = 0;
+    beginOtaConnection();
 }
 
 void Esp8266Controller::startOta(const QString &host, quint16 port, const QString &manifestPath)
@@ -291,6 +312,20 @@ void Esp8266Controller::processIpdPayload(const QByteArray &payload)
                 if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("ota")) {
                     const QString manifest = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("manifest_path")).toString();
                     if (!manifest.isEmpty()) QTimer::singleShot(300, this, [this, manifest] { startOta(mqttHost_, mqttPort_, manifest); });
+                } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("system_update")) {
+                    const QJsonObject manifest = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("manifest")).toObject();
+                    const QJsonArray artifacts = manifest.value(QStringLiteral("artifacts")).toArray();
+                    if (manifest.isEmpty() || artifacts.isEmpty()) { finishWithError(QStringLiteral("系统升级清单无效")); return; }
+                    systemUpdateActive_ = true;
+                    systemUpdateId_ = manifest.value(QStringLiteral("id")).toString();
+                    systemUpdateVersion_ = manifest.value(QStringLiteral("version")).toString();
+                    systemUpdateArtifacts_.clear();
+                    for (const QJsonValue &value : artifacts) if (value.isObject()) systemUpdateArtifacts_.append(value.toObject());
+                    systemUpdateIndex_ = 0;
+                    systemUpdateDir_ = QStringLiteral("/mnt/boot/update");
+                    QFile::remove(systemUpdateDir_ + QStringLiteral("/manifest.sha256"));
+                    if (!QDir().mkpath(systemUpdateDir_)) { finishWithError(QStringLiteral("无法创建系统升级目录")); return; }
+                    QTimer::singleShot(300, this, &Esp8266Controller::startNextSystemArtifact);
                 } else if (command.value(QStringLiteral("kind")).toString() == QStringLiteral("set_sampling_interval")) {
                     const int seconds = command.value(QStringLiteral("payload")).toObject().value(QStringLiteral("seconds")).toInt();
                     if (seconds >= 1 && seconds <= 3600) emit remoteSamplingInterval(seconds);
@@ -325,7 +360,7 @@ void Esp8266Controller::processHttpData(const QByteArray &data)
         if (!match.hasMatch()) { finishWithError(QStringLiteral("OTA 响应缺少 Content-Length")); return; }
         otaExpectedBytes_ = match.captured(1).toLongLong();
         if (otaDownloadingFile_) {
-            delete otaFile_; otaFile_ = new QFile(QStringLiteral("/tmp/environment_monitor.new"));
+            delete otaFile_; otaFile_ = new QFile(systemUpdateActive_ ? otaLocalPath_ : QStringLiteral("/tmp/environment_monitor.new"));
             if (!otaFile_->open(QIODevice::WriteOnly | QIODevice::Truncate)) { finishWithError(QStringLiteral("无法创建 OTA 临时文件")); return; }
         }
         if (!body.isEmpty()) processHttpData(body);
@@ -347,20 +382,30 @@ void Esp8266Controller::processHttpData(const QByteArray &data)
     }
     if (otaReceivedBytes_ >= otaExpectedBytes_) finishHttpResponse();
 }
-
 void Esp8266Controller::finishHttpResponse()
 {
     timeoutTimer_->stop();
     if (otaDownloadingFile_) {
         if (otaFile_) { otaFile_->flush(); otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
-        QFile file(QStringLiteral("/tmp/environment_monitor.new"));
+        QFile file(systemUpdateActive_ ? otaLocalPath_ : QStringLiteral("/tmp/environment_monitor.new"));
         if (!file.open(QIODevice::ReadOnly)) { finishWithError(QStringLiteral("无法读取 OTA 临时文件")); return; }
         if (file.size() != otaExpectedFileBytes_) { file.close(); QFile::remove(file.fileName()); finishWithError(QStringLiteral("OTA 文件大小校验失败")); return; }
         const QString hash = QString::fromLatin1(QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256).toHex());
         if (hash.compare(otaFileSha256_, Qt::CaseInsensitive) != 0) { file.close(); QFile::remove(file.fileName()); finishWithError(QStringLiteral("OTA SHA256 校验失败")); return; }
         file.close();
+        if (systemUpdateActive_) {
+            QFile checksumFile(systemUpdateDir_ + QStringLiteral("/manifest.sha256"));
+            if (!checksumFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) { finishWithError(QStringLiteral("无法写入系统升级校验清单")); return; }
+            checksumFile.write((hash + QStringLiteral("  ") + QFileInfo(file.fileName()).fileName() + QLatin1Char('\n')).toUtf8());
+        }
         writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n")); operation_ = Idle;
-        emit otaPackageReady(otaVersion_, file.fileName());
+        if (systemUpdateActive_) {
+            ++systemUpdateIndex_;
+            otaDownloadingFile_ = false;
+            QTimer::singleShot(300, this, &Esp8266Controller::startNextSystemArtifact);
+        } else {
+            emit otaPackageReady(otaVersion_, file.fileName());
+        }
         return;
     }
     const QJsonDocument document = QJsonDocument::fromJson(otaHttpBody_);
@@ -369,12 +414,8 @@ void Esp8266Controller::finishHttpResponse()
     otaFilePath_ = manifest.value(QStringLiteral("path")).toString();
     otaFileSha256_ = manifest.value(QStringLiteral("sha256")).toString().trimmed();
     const qint64 size = static_cast<qint64>(manifest.value(QStringLiteral("size")).toDouble());
-    if (!otaFilePath_.startsWith(QLatin1Char('/')) || otaFilePath_.contains(QStringLiteral("..")) ||
-        otaVersion_.isEmpty() || otaFileSha256_.size() != 64 || size <= 0) {
-        finishWithError(QStringLiteral("OTA manifest.json 内容不完整或路径不安全")); return;
-    }
-    otaExpectedFileBytes_ = size;
-    otaDownloadingFile_ = true; otaExpectedBytes_ = 0; otaReceivedBytes_ = 0;
+    if (!otaFilePath_.startsWith(QLatin1Char('/')) || otaFilePath_.contains(QStringLiteral("..")) || otaVersion_.isEmpty() || otaFileSha256_.size() != 64 || size <= 0) { finishWithError(QStringLiteral("OTA manifest.json 内容不完整或路径不安全")); return; }
+    otaExpectedFileBytes_ = size; otaDownloadingFile_ = true; otaExpectedBytes_ = 0; otaReceivedBytes_ = 0;
     writeSerial(QByteArrayLiteral("AT+CIPCLOSE\r\n")); operation_ = Idle;
     QTimer::singleShot(200, this, &Esp8266Controller::beginOtaConnection);
 }
@@ -451,7 +492,7 @@ void Esp8266Controller::finishWithError(const QString &message)
     timeoutTimer_->stop();
     commandPolling_ = false;
     if (otaFile_) { otaFile_->close(); delete otaFile_; otaFile_ = nullptr; }
-    if (otaDownloadingFile_) QFile::remove(QStringLiteral("/tmp/environment_monitor.new"));
+    if (otaDownloadingFile_) QFile::remove(systemUpdateActive_ ? otaLocalPath_ : QStringLiteral("/tmp/environment_monitor.new"));
     operation_ = Idle; emit operationFailed(message);
 }
 QString Esp8266Controller::escapeArgument(const QString &value)
