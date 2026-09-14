@@ -293,6 +293,10 @@ void Esp8266Controller::readAvailable()
 
 void Esp8266Controller::processIpdPayload(const QByteArray &payload)
 {
+    if (operation_ == OtaReceiving) {
+        processHttpData(payload);
+        return;
+    }
     if (operation_ == HttpSending) {
         commandResponse_.append(payload);
         if (commandResponse_.indexOf("\r\n\r\n") >= 0) {
