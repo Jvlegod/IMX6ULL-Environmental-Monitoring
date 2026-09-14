@@ -83,6 +83,7 @@ void SimulatedSensorProvider::updateDeviceStatuses()
 
 void SimulatedSensorProvider::sample()
 {
+    if (enabledDevices_ == 0) return;
     const double t = sampleIndex_++ / 10.0;
     SensorSnapshot snapshot;
     snapshot.timestamp = QDateTime::currentDateTime();
