@@ -16,9 +16,15 @@ void TrendChart::paintEvent(QPaintEvent *)
     const QVector<QVector<double>> values{temperature_, humidity_, pressure_, illuminance_};
     for (int s = 0; s < values.size(); ++s) {
         if (values[s].size() < 2) continue;
-        double minValue = values[s].first();
-        double maxValue = minValue;
-        for (double value : values[s]) { if (!qIsFinite(value)) continue; minValue = qMin(minValue, value); maxValue = qMax(maxValue, value); }
+        double minValue = 0.0;
+        double maxValue = 0.0;
+        bool hasValue = false;
+        for (double value : values[s]) {
+            if (!qIsFinite(value)) continue;
+            if (!hasValue) { minValue = maxValue = value; hasValue = true; }
+            else { minValue = qMin(minValue, value); maxValue = qMax(maxValue, value); }
+        }
+        if (!hasValue) continue;
         const double span = qMax(0.001, maxValue - minValue);
         QPainterPath path;
         for (int i = 0; i < values[s].size(); ++i) {
