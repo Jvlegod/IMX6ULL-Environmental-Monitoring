@@ -199,10 +199,50 @@ MainWindow::MainWindow(ISensorProvider *provider, QWidget *parent)
         else { provider_->stop(); samplingActive_ = false; samplingButton_->setText(QStringLiteral("开始采集")); statusBar()->showMessage(QStringLiteral("网页已暂停采集"), 3000); }
     });
     connect(wifiDialog_->controller(), &Esp8266Controller::remoteDeviceEnabled, this, [this](const QString &device, bool enabled) {
-        if (device != QStringLiteral("all")) return;
-        enabledDeviceMask_ = enabled ? SensorAll : 0;
+        int flag = 0;
+        QString shortName, fullName;
+        if (device == QStringLiteral("all")) {
+            enabledDeviceMask_ = enabled ? SensorAll : 0;
+            provider_->setEnabledDevices(enabledDeviceMask_);
+            statusBar()->showMessage(enabled ? QStringLiteral("网页已启用全部采集设备") : QStringLiteral("网页已停用全部采集设备"), 3000);
+            const QSignalBlocker blocker(statusTable_);
+            for (int i = 0; i < statusTable_->rowCount(); ++i) {
+                QTableWidgetItem *item = statusTable_->item(i, 0);
+                if (item && (item->flags() & Qt::ItemIsUserCheckable))
+                    item->setCheckState(enabled ? Qt::Checked : Qt::Unchecked);
+            }
+            return;
+        } else if (device == QStringLiteral("bmp580")) {
+            flag = SensorBmp580; shortName = QStringLiteral("BMP580"); fullName = QStringLiteral("BMP580 / I2C");
+        } else if (device == QStringLiteral("rs485")) {
+            flag = SensorRs485; shortName = QStringLiteral("RS485"); fullName = QStringLiteral("RS485 温湿度计");
+        } else if (device == QStringLiteral("veml7700")) {
+            flag = SensorVeml7700; shortName = QStringLiteral("VEML7700"); fullName = QStringLiteral("VEML7700 / I2C");
+        } else {
+            return;
+        }
+        if (enabled)
+            enabledDeviceMask_ |= flag;
+        else
+            enabledDeviceMask_ &= ~flag;
         provider_->setEnabledDevices(enabledDeviceMask_);
-        statusBar()->showMessage(enabled ? QStringLiteral("网页已启用全部采集设备") : QStringLiteral("网页已停用全部采集设备"), 3000);
+        acquisitionDeviceMask_ = enabledDeviceMask_;
+        QSettings settings(environmentMonitorSettingsPath(), QSettings::IniFormat);
+        settings.setValue(QStringLiteral("acquisition/deviceMask"), enabledDeviceMask_);
+        settings.sync();
+        // sync status table checkbox (use QSignalBlocker to avoid re-triggering)
+        {
+            const QSignalBlocker blocker(statusTable_);
+            for (int i = 0; i < statusTable_->rowCount(); ++i) {
+                QTableWidgetItem *item = statusTable_->item(i, 0);
+                if (item && item->text().startsWith(shortName)) {
+                    item->setCheckState(enabled ? Qt::Checked : Qt::Unchecked);
+                    break;
+                }
+            }
+        }
+        updateDeviceStatus(fullName, enabled, enabled ? QStringLiteral("网页已启用") : QStringLiteral("网页已停用"));
+        statusBar()->showMessage(QStringLiteral("网页%1 %2").arg(enabled ? QStringLiteral("启用") : QStringLiteral("停用"), shortName), 3000);
     });
     connect(wifiDialog_->controller(), &Esp8266Controller::remoteSamplingInterval, this, [this](int seconds) {
         const int index = samplingIntervalCombo_->findData(seconds);
