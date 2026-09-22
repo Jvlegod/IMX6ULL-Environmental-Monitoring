@@ -214,3 +214,13 @@ CSV 保存路径可自定义, 默认 `/tmp/environment_monitor/acquisition.csv`.
 - CSV 导出: 下载历史数据
 
 网页端操作会通过 WiFi 下发到开发板, 无需直连设备. 命令状态在开发板状态栏显示反馈.
+
+## 更多文档
+
+|模块|文档|
+|-|-|
+|BMP580|[BMP580](./BMP580.md)|
+|VEML7700|[VEML7700](./VEML7700.md)|
+|RS485|TODO|
+|ESP8266|[ESP8266](./ESP8266.md)|
+|OTA|[OTA_GUIDE](./OTA_GUIDE.md)|
